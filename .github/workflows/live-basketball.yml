@@ -3,6 +3,10 @@ on:
   schedule:
     - cron: '0,20,40 * * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-basketball.yml'
 permissions:
   contents: read
 concurrency:
@@ -38,6 +42,8 @@ jobs:
       - name: Install Chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: python -m playwright install chromium
+      - name: One-time 1xBit nested fields diagnostic
+        run: PYTHONPATH=. python diagnostics/inspect_1xbit.py
       - name: Run parser tests
         run: python -m unittest discover -s tests -v
       - name: Collect and update sheet
