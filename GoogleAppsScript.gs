@@ -172,6 +172,200 @@ function exactKey_(date, home, away) {
   return `${matchDateKey_(date)}|${normTeam_(home)}|${normTeam_(away)}`;
 }
 
+
+// Conservative retrospective deduplication. This runs on every successful
+// ingestion, so matches no longer present in any LIVE feed can still be fixed.
+// A match with different trustworthy Sportradar IDs is NEVER auto-merged.
+function sameHistoricalFixture_(a, b) {
+  if (matchDateKey_(a[1]) !== matchDateKey_(b[1])) return false;
+  const aId = eventId_(a[12]), bId = eventId_(b[12]);
+  if (aId && bId && aId !== bId) return false;
+  const aClass = fixtureClass_(a[2], a[3], a[4]);
+  if (aClass !== fixtureClass_(b[2], b[3], b[4])) return false;
+  if (aId && bId && aId === bId) return true;
+  return sameFixture_(a[1], a[3], a[4], a[2], b, aId);
+}
+
+function comparableStamp_(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime()))
+    return Utilities.formatDate(value, 'Europe/Prague', 'yyyy-MM-dd HH:mm:ss');
+  return String(value || '');
+}
+
+function joinHistoricalNotes_(notes) {
+  const unique = new Set();
+  for (const note of notes) {
+    for (const part of String(note || '').split(/\s*;\s*/)) {
+      const trimmed = part.trim();
+      if (trimmed && !trimmed.startsWith('ZKONTROLOVAT DUPLIKAT'))
+        unique.add(trimmed);
+    }
+  }
+  return [...unique].join('; ');
+}
+
+function possibleHistoricalDuplicate_(a, b) {
+  if (matchDateKey_(a[1]) !== matchDateKey_(b[1])) return false;
+  if (fixtureClass_(a[2], a[3], a[4]) !== fixtureClass_(b[2], b[3], b[4]))
+    return false;
+  const aw = fixtureClass_(a[2], a[3], a[4]).endsWith('|women');
+  const paired = (sameTeam_(a[3], b[3], aw) && sameTeam_(a[4], b[4], aw)) ||
+    (sameTeam_(a[3], b[4], aw) && sameTeam_(a[4], b[3], aw));
+  // Two very similar teams and a distinct Sportradar ID are suspicious,
+  // but never evidence that the ID is wrong.
+  return paired;
+}
+
+function chooseHistoricalMaster_(rows, members) {
+  return members.slice().sort((a, b) => {
+    const x = rows[a], y = rows[b];
+    const xHasId = eventId_(x[12]) ? 1 : 0;
+    const yHasId = eventId_(y[12]) ? 1 : 0;
+    if (xHasId !== yHasId) return yHasId - xHasId;
+    const xt = comparableStamp_(x[9]), yt = comparableStamp_(y[9]);
+    if (xt !== yt) return xt < yt ? -1 : 1;
+    return a - b;
+  })[0];
+}
+
+function planHistoricalDeduplication_(rows, stamp) {
+  // Group only within the same match day and youth/women category.
+  const buckets = new Map();
+  rows.forEach((r, ix) => {
+    if (!r[1] || !r[3] || !r[4]) return;
+    const key = matchDateKey_(r[1]) + '|' + fixtureClass_(r[2], r[3], r[4]);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(ix);
+  });
+  const groups = [];
+  const flagged = new Set();
+  for (const indices of buckets.values()) {
+    const bucketGroups = [];
+    for (const ix of indices) {
+      const candidates = bucketGroups.filter(g =>
+        g.every(j => sameHistoricalFixture_(rows[ix], rows[j]) &&
+                     sameHistoricalFixture_(rows[j], rows[ix])));
+      if (candidates.length === 1) {
+        candidates[0].push(ix);
+      } else if (candidates.length > 1) {
+        flagged.add(ix);
+        candidates.forEach(g => g.forEach(j => flagged.add(j)));
+        bucketGroups.push([ix]);
+      } else {
+        bucketGroups.push([ix]);
+      }
+    }
+    groups.push(...bucketGroups);
+    // Only mark remaining possible duplicates, never merge conflicting IDs.
+    for (let i = 0; i < bucketGroups.length; i++) {
+      for (let j = i + 1; j < bucketGroups.length; j++) {
+        if (bucketGroups[i].some(a => bucketGroups[j].some(b =>
+            possibleHistoricalDuplicate_(rows[a], rows[b])))) {
+          bucketGroups[i].forEach(ix => flagged.add(ix));
+          bucketGroups[j].forEach(ix => flagged.add(ix));
+        }
+      }
+    }
+  }
+
+  const deleteIndices = [];
+  const modified = new Set();
+  const archive = [];
+  const masterByIndex = new Map(rows.map((_, ix) => [ix, ix]));
+  let merged = 0;
+  for (const group of groups) {
+    if (group.length < 2) continue;
+    const ids = new Set(group.map(ix => eventId_(rows[ix][12])).filter(Boolean));
+    if (ids.size > 1) {
+      group.forEach(ix => flagged.add(ix));
+      continue;
+    }
+    const master = chooseHistoricalMaster_(rows, group);
+    const original = group.map(ix => rows[ix].slice());
+    for (let i = 0; i < group.length; i++) {
+      const ix = group[i];
+      archive.push([stamp, rows[master][0], ix + 2, ix === master ? 'MASTER BEFORE' : 'MERGED FROM',
+                    ...original[i]]);
+      masterByIndex.set(ix, master);
+    }
+    const target = rows[master];
+    for (const ix of group) {
+      if (ix === master) continue;
+      const other = rows[ix];
+      for (let col = 5; col <= 8; col++) {
+        // Never lose a confirmed YES; never turn an unverified source into NO.
+        if (other[col] === 'ANO') target[col] = 'ANO';
+        else if (target[col] !== 'ANO' && other[col] === 'NE') target[col] = 'NE';
+      }
+      if (comparableStamp_(other[9]) &&
+          (!comparableStamp_(target[9]) || comparableStamp_(other[9]) < comparableStamp_(target[9])))
+        target[9] = other[9];
+      if (comparableStamp_(other[10]) > comparableStamp_(target[10]))
+        target[10] = other[10];
+      // The same polling run may have counted both rows, so summing would
+      // inflate this field. MAX is a conservative count, with original
+      // counters preserved in the archive.
+      target[11] = Math.max(Number(target[11]) || 0, Number(other[11]) || 0);
+      deleteIndices.push(ix);
+      merged++;
+    }
+    target[12] = joinHistoricalNotes_(original.map(r => r[12]));
+    if (ids.size === 1 && !eventId_(target[12]))
+      target[12] = [...ids][0] + (target[12] ? '; ' + target[12] : '');
+    modified.add(master);
+  }
+  const deleted = new Set(deleteIndices);
+  let reviewCandidates = 0;
+  for (const ix of flagged) {
+    if (deleted.has(ix)) continue;
+    const note = String(rows[ix][12] || '');
+    if (!note.includes('ZKONTROLOVAT DUPLIKAT')) {
+      rows[ix][12] = note + (note.trim() ? '; ' : '') +
+        'ZKONTROLOVAT DUPLIKAT (nejasna shoda, ponechano oddelene)';
+      modified.add(ix);
+    }
+    reviewCandidates++;
+  }
+  return {
+    deleteIndices: deleteIndices.sort((a, b) => b - a),
+    modified, masterByIndex, archive, merged, reviewCandidates
+  };
+}
+
+function archiveHistoricalDuplicates_(ss, archive) {
+  if (!archive.length) return;
+  let sheet = ss.getSheetByName('Archiv duplicit');
+  if (!sheet) sheet = ss.insertSheet('Archiv duplicit');
+  const headers = ['Čas sloučení', 'Klíč zachovaného zápasu', 'Původní řádek', 'Role',
+    'Klíč zápasu', 'Datum utkání', 'Soutěž', 'Domácí', 'Hosté',
+    'SynotTip', 'Fonbet', '1xBit', 'Football.com', 'Poprvé', 'Naposledy',
+    'Počet kontrol', 'Poznámka'];
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+  }
+  sheet.getRange(sheet.getLastRow() + 1, 1, archive.length, headers.length)
+    .setValues(archive);
+}
+
+function deleteHistoricalDuplicateRows_(sheet, indices) {
+  // The sheet has a header in row 1, hence array index + 2 = sheet row.
+  // All indices are original (pre-deletion) and sorted highest first.
+  let start = -1, end = -1;
+  function flush() {
+    if (start !== -1) sheet.deleteRows(end + 2, start - end + 1);
+  }
+  for (const ix of indices) {
+    if (start < 0) start = end = ix;
+    else if (ix === end - 1) end = ix;
+    else {
+      flush();
+      start = end = ix;
+    }
+  }
+  flush();
+}
+
 function saveSnapshot_(body) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const gamesSheet = ss.getSheetByName('Zápasy');
@@ -266,6 +460,12 @@ function saveSnapshot_(body) {
     touched.add(ix);
   }
 
+  // Retrospectively compare all stored rows, including finished games.
+  // Keep the archive BEFORE removing any duplicate row from the live sheet.
+  const cleanup = planHistoricalDeduplication_(rows, stamp);
+  for (const ix of cleanup.modified) touched.add(ix);
+  const removedIndices = new Set(cleanup.deleteIndices);
+
   // Write adjacent touched rows in one operation instead of dozens of calls.
   // Leave untouched rows (and any formulas they may contain) unchanged.
   const oldCount = originalRows.length;
@@ -294,6 +494,11 @@ function saveSnapshot_(body) {
       .setValues(rows.slice(oldCount));
   }
 
+  if (cleanup.archive.length) {
+    archiveHistoricalDuplicates_(ss, cleanup.archive);
+    deleteHistoricalDuplicateRows_(gamesSheet, cleanup.deleteIndices);
+  }
+
   function summaryStatus(source) {
     const entry = sourceMap.get(source);
     if (!entry) return {status: 'NEDOSTUPNÉ', count: ''};
@@ -304,11 +509,13 @@ function saveSnapshot_(body) {
   const counts = SOURCES.map(summaryStatus);
   checksSheet.appendRow([stamp, counts[0].status, counts[0].count, counts[1].status, counts[1].count,
     counts[2].status, counts[2].count, counts[3].status, counts[3].count,
-    `${created} nových zápasů, ${addedObservations} dostupností; zdroje s neověřenou úplností nejsou použity k označení NE`]);
+    `${created - cleanup.deleteIndices.filter(ix => ix >= oldCount).length} nových zápasů, ${addedObservations} dostupností; ${cleanup.merged} sloučených duplicit, ${cleanup.reviewCandidates} k prověření; zdroje s neověřenou úplností nejsou použity k označení NE`]);
   srcSheet.getRange(2, 3, 4, 4).setValues(SOURCES.map((name, i) => {
     const s = sourceMap.get(name) || {};
     return [stamp, counts[i].status, counts[i].count, String(s.error || '').slice(0, 450)];
   }));
-  return {ok: true, created, currentRows: rows.length, positiveObservations: addedObservations,
+  return {ok: true, created: created - cleanup.deleteIndices.filter(ix => ix >= oldCount).length,
+    currentRows: rows.length - cleanup.merged, mergedDuplicates: cleanup.merged,
+    reviewCandidates: cleanup.reviewCandidates, positiveObservations: addedObservations,
     sources: SOURCES.map((name, i) => ({name, ...counts[i]}))};
 }
