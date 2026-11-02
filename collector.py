@@ -19,7 +19,7 @@ SYN_URL = "https://sport.synottip.cz/live"
 FOOT_API = "https://www.football.com/api/ng/factsCenter/configurableLiveOrPrematchEvents?sportId=sr%3Asport%3A2"
 FOOT_PAGE = "https://www.football.com/ng/m/sport/basketball/live_list"
 FON_URL = "https://fonbet.com.cy/live/basketball"
-FON_API = "https://line02.cy8cff-resources.com/events/list?lang=en&version=0&scopeMarket=1700"
+FON_API = "https://line-lb51.bk6bba-resources.com/events/listBase?lang=en&scopeMarket=1600"
 BIT_URL = "https://1xbit-8976.pro/cs/live/basketball"
 BIT_API = ("https://1xbit-8976.pro/service-api/main-live-feed/v3/games1x2"
            "?cfView=3&count=40&fcountry=204&gr=933&grMode=4&lng=cs&ref=65&selectedMs=1.3,2.3,10.3")
@@ -198,7 +198,7 @@ def parse_fonbet(payload: Any) -> list[Match] | None:
             continue
         if str(event.get("place", "")).lower() != "live":
             continue
-        if str(event.get("level", "1")) != "1":
+        if str(event.get("level", "1")) != "1" or event.get("parentId"):
             continue
         if event.get("kind") is not None and str(event["kind"]) != "1":
             continue
@@ -366,7 +366,7 @@ async def fonbet(browser, client: httpx.AsyncClient, wait_ms: int = 7000) -> Sou
     """Read a complete public Fonbet feed; fall back to site's own API calls.
 
     No anti-bot solving, login, copied cookies, or guesswork about access.
-    The URL's version=0 asks for a full snapshot, unlike a stale delta cursor.
+    /events/listBase returns the complete event directory instead of a stale\n    versioned /events/list delta. Only place=live counts as LIVE coverage.
     """
     src = Source("Fonbet")
     notes = []
@@ -406,7 +406,7 @@ async def fonbet(browser, client: httpx.AsyncClient, wait_ms: int = 7000) -> Sou
             statuses.add("Feed parse " + type(exc).__name__)
 
     def on_response(response):
-        if "/events/list" not in response.url:
+        if "/events/listBase" not in response.url:
             return
         t = asyncio.create_task(observe(response))
         pending.add(t)
