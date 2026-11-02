@@ -719,6 +719,94 @@ def reconcile_1xbit_references(sources: list[Source]) -> int:
     return linked
 
 
+# Conservative cross-bookmaker name matching for previously unseen games.
+# Names stay unchanged in the source snapshots; we only attach genuine known IDs.
+_CLUB_WORDS = frozenset({"as", "bc", "bk", "kk", "sk", "jk", "fc", "ac"})
+_CITY_WORDS = frozenset({
+    "athens", "moscow", "saint", "petersburg", "chelyabinsk",
+    "kursk", "vratsa", "doha", "nicosia", "kedainiai",
+})
+_RISK_WORDS = frozenset({
+    "women", "woman", "w", "men", "u18", "u19", "u20", "u21",
+    "u22", "u23", "reserves", "reserve", "academy", "junior",
+    "juniors", "ii", "iii", "b", "2",
+})
+
+
+def _team_words(name: str) -> tuple[str, ...]:
+    text = unicodedata.normalize("NFD", str(name or "").casefold())
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    tokens = re.findall(r"[a-z0-9]+", text)
+    return tuple(
+        {"ateny": "athens", "athina": "athens", "zene": "women"}.get(t, t)
+        for t in tokens if t not in _CLUB_WORDS
+    )
+
+
+def team_equivalent(a: str, b: str) -> bool:
+    x, y = _team_words(a), _team_words(b)
+    if not x or not y:
+        return False
+    if x == y:
+        return True
+    # Do not conflate women's, youth or B teams with a senior team.
+    if set(x).intersection(_RISK_WORDS) != set(y).intersection(_RISK_WORDS):
+        return False
+    short, long = (x, y) if len(x) < len(y) else (y, x)
+    return (
+        len(long) - len(short) <= 2
+        and tuple(long[:len(short)]) == short
+        and all(t in _CITY_WORDS for t in long[len(short):])
+    )
+
+
+def league_equivalent(a: str, b: str) -> bool:
+    def key(value):
+        text = unicodedata.normalize("NFD", str(value or "").casefold())
+        text = "".join(ch for ch in text if not unicodedata.combining(ch))
+        text = re.sub(r"[^a-z0-9]+", " ", text)
+        return re.sub(r"\s+", " ", text).strip().replace("recko", "greece")
+    return bool(key(a) and key(b) and key(a) == key(b))
+
+
+def reconcile_semantic_references(sources: list[Source]) -> int:
+    """Find genuine Sportradar IDs for exact or safe-city-suffix team variants.
+
+    A different competition is allowed only for fully equal normalized team
+    names; otherwise require exactly the same normalized league.
+    Ambiguous or conflicting IDs are never auto-assigned.
+    """
+    references = [
+        match for source in sources
+        if source.source in ("SynotTip", "Football.com")
+        for match in source.matches
+        if re.fullmatch(r"sr:match:\d{5,}", match.eventId or "")
+    ]
+    linked = 0
+    for source in sources:
+        if source.source not in ("Fonbet", "1xBit"):
+            continue
+        for match in source.matches:
+            if match.eventId:
+                continue
+            ids = set()
+            for ref in references:
+                if not ref.date or ref.date != match.date:
+                    continue
+                if not team_equivalent(match.home, ref.home):
+                    continue
+                if not team_equivalent(match.away, ref.away):
+                    continue
+                exact_teams = (_team_words(match.home) == _team_words(ref.home)
+                               and _team_words(match.away) == _team_words(ref.away))
+                if exact_teams or league_equivalent(match.competition, ref.competition):
+                    ids.add(ref.eventId)
+            if len(ids) == 1:
+                match.eventId = next(iter(ids))
+                linked += 1
+    return linked
+
+
 async def collect():
     stamp = datetime.now(timezone.utc).isoformat()
     async with async_playwright() as pw:
@@ -738,6 +826,8 @@ async def collect():
     LOG.info("Fonbet: %s exact/known-alias matches linked to a unique SportRadar ID", linked)
     bit_linked = reconcile_1xbit_references(sources)
     LOG.info("1xBit: %s verified pair matches linked to SportRadar IDs", bit_linked)
+    semantic_linked = reconcile_semantic_references(sources)
+    LOG.info("Both feeds: %s additional safe name variations linked to SportRadar IDs", semantic_linked)
     payload = {"checkedAt": stamp, "sources": [s.as_dict() for s in sources]}
     Path("output").mkdir(exist_ok=True)
     Path("output/latest.json").write_text(
