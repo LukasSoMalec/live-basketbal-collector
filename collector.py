@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -495,6 +496,68 @@ async def inspect_source(browser, client, name, page_url, api_url, needle):
     return s
 
 
+def _pair_key(home: str, away: str) -> tuple[str, str]:
+    def clean(text):
+        value = unicodedata.normalize("NFKD", str(text)).casefold()
+        value = "".join(c for c in value if not unicodedata.combining(c))
+        return re.sub(r"[^a-z0-9]+", " ", value).strip()
+    return clean(home), clean(away)
+
+
+# Carefully reviewed equivalents, not fuzzy similarity. The pair must match
+# in full (both teams, same day) and have one unique SportRadar event ID.
+# These aliases never change which bookmaker actually listed a fixture.
+_FONBET_PAIR_ALIASES_RAW = [
+    (("Zenit", "Igokea"), ("Zenit Saint Petersburg", "Igokea Aleksandrovac")),
+    (("Mega", "Spartak Subotica"), ("KK Mega Basket", "Spartak Subotica")),
+    (("Nevezis Kedainiai", "BC Gargždai"), ("Nevezis Kedainiai", "Gargzdu Gargzdai")),
+    (("Khimki", "Chelbasket"), ("BC Khimki Moscow", "BC Chelbasket Chelyabinsk")),
+    (("Desna Bryansk", "CSKA 2"), ("BC Desna Bryansk", "CSKA-2 Moscow")),
+    (("Rusichi", "Dynamo Grozny"), ("Rusichi Kursk", "BK Dynamo Grozny")),
+    (("Besiktas (w)", "Maccabi Bnot Ashdod (w)"), ("Besiktas JK", "Maccabi Ashdod")),
+    (("TTT-Riga (w)", "Elitzur Ramla (w)"), ("TTT Riga", "Elizur Ramla")),
+    (("Borac Banja Luka", "Orlovik Zepce"), ("Borac Banja Luka", "Kk Orlovik Zepce")),
+    (("Qatar SC", "Al-Ahli Doha"), ("Qatar SC", "AL Ahli (Qat)")),
+    (("Apollon Limassol", "APOEL"), ("BC Apollon Limassol", "Apoel Nicosia")),
+    (("Murray State (stud)", "Tennesee State (stud)"),
+     ("Murray State Racers", "Tennessee State Tigers")),
+]
+_FONBET_PAIR_ALIASES = {
+    _pair_key(*fonbet_names): _pair_key(*reference_names)
+    for fonbet_names, reference_names in _FONBET_PAIR_ALIASES_RAW
+}
+
+
+def reconcile_fonbet_references(sources: list[Source]) -> int:
+    """Link Fonbet matches to a unique observed SportRadar ID from other sources.
+
+    Avoids matching on Google Sheets' date cell type (Date vs text) until
+    the deployed Apps Script is updated. Never invent a Sportradar ID.
+    """
+    ids_by_key: dict[tuple[str, tuple[str, str]], set[str]] = {}
+    for source in sources:
+        if source.source not in ("SynotTip", "Football.com"):
+            continue
+        for m in source.matches:
+            if not re.fullmatch(r"sr:match:\d{5,}", m.eventId or ""):
+                continue
+            key = (m.date, _pair_key(m.home, m.away))
+            ids_by_key.setdefault(key, set()).add(m.eventId)
+
+    linked = 0
+    for source in sources:
+        if source.source != "Fonbet":
+            continue
+        for m in source.matches:
+            pair = _pair_key(m.home, m.away)
+            reference_pair = _FONBET_PAIR_ALIASES.get(pair, pair)
+            ids = ids_by_key.get((m.date, reference_pair), set())
+            if len(ids) == 1:
+                m.eventId = next(iter(ids))
+                linked += 1
+    return linked
+
+
 async def collect():
     stamp = datetime.now(timezone.utc).isoformat()
     async with async_playwright() as pw:
@@ -510,6 +573,8 @@ async def collect():
                     inspect_source(browser, client, "1xBit", BIT_URL, BIT_API, "/games1x2"))
         finally:
             await browser.close()
+    linked = reconcile_fonbet_references(sources)
+    LOG.info("Fonbet: %s exact/known-alias matches linked to a unique SportRadar ID", linked)
     payload = {"checkedAt": stamp, "sources": [s.as_dict() for s in sources]}
     Path("output").mkdir(exist_ok=True)
     Path("output/latest.json").write_text(
