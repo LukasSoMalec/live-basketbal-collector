@@ -204,6 +204,23 @@ class ParserTests(unittest.TestCase):
         self.assertEqual([m.eventId for m in bit.matches],
                          ["sr:match:74131944", "", ""])
 
+    def test_1xbit_verified_reversed_womens_fixtures(self):
+        official = Source("SynotTip", matches=[
+            Match("Ole Miss Rebels", "Alcorn State Braves", "NCAA Women",
+                  "2026-11-02", "sr:match:74978916"),
+            Match("Vanderbilt Commodores", "Lipscomb Bisons", "NCAA Women",
+                  "2026-11-02", "sr:match:73869150"),
+        ])
+        bit = Source("1xBit", matches=[
+            Match("Alcorn State Braves (Women)", "Ole Miss Rebels (Women)",
+                  "WNCAA", "2026-11-02", providerId="111"),
+            Match("Lipscomb Bisons (Women)", "Vanderbilt Commodores (Women)",
+                  "WNCAA", "2026-11-02", providerId="222"),
+        ])
+        self.assertEqual(reconcile_1xbit_references([official, bit]), 2)
+        self.assertEqual([m.eventId for m in bit.matches],
+                         ["sr:match:74978916", "sr:match:73869150"])
+
     def test_team_split_with_dashes(self):
         self.assertEqual(split_teams("BC Khimki - CSKA-2 Moscow"),
                          ("BC Khimki", "CSKA-2 Moscow"))
