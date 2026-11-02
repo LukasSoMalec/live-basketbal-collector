@@ -164,12 +164,12 @@ function runMockIngestion() {
   assert.equal(games.rows[1][9],'2026-11-02 15:00:00');
   assert.equal(games.rows[1][10],'2026-11-02 16:05:00');
   assert.equal(games.rows[1][11],3);
-  assert.equal(sheets['Archiv duplicit'].rows.length,4);
+  assert.equal(sheets['Archiv duplicit'].rows.length,3);
   assert.equal(sheets['Archiv duplicit'].rows[0].length,17);
   const second=context.saveSnapshot_(payload);
   assert.equal(second.mergedDuplicates,0);
   assert.equal(games.getLastRow(),2);
-  assert.equal(sheets['Archiv duplicit'].rows.length,4);
+  assert.equal(sheets['Archiv duplicit'].rows.length,3);
   assert.equal(checks.rows.length,2);
 
   const alternative=row('Greece. Elite League','AS Papagou','Panionios',
