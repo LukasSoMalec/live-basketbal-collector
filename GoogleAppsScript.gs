@@ -40,29 +40,61 @@ function norm_(text) {
 }
 
 function normTeam_(text) {
-  // Keep youth/women/B-team markers. Ignore only generic club abbreviations.
-  return norm_(text).replace(/\bateny\b/g, 'athens')
+  let n = norm_(text);
+  n = n.replace(/\bpetrohrad\b/g, 'saint petersburg')
+    .replace(/\bgrantorino\b/g, 'gran torino')
+    .replace(/\belion\b/g, 'elyon')
+    .replace(/\bness\b/g, 'nes')
+    .replace(/\bvrilissiakos\b/g, 'vrilisiakos')
+    .replace(/\bcornhuskers\b/g, 'huskers')
+    .replace(/\bateny\b/g, 'athens')
     .replace(/\bathina\b/g, 'athens')
     .replace(/\bzene\b/g, 'women')
-    .split(' ').filter(t => t && !['as','bc','bk','kk','sk','jk','fc','ac'].includes(t))
-    .join(' ');
+    .replace(/\bada blois basket 41\b/g, 'ada blois')
+    .replace(/\bsao jose state\b/g, 'san jose state')
+    .replace(/\bsan jose state spartans\b/g, 'san jose state');
+  const generic = new Set([
+    'as', 'bc', 'bk', 'kk', 'sk', 'jk', 'fc', 'ac', 'ao', 'asc',
+    'kfum', 'basket', 'baskets', 'basketball', 'club', 'draft', 'allianz'
+  ]);
+  return n.split(' ').filter(t => t && !generic.has(t)).join(' ');
 }
 
-function sameTeam_(a, b) {
-  const x = normTeam_(a).split(' ').filter(Boolean);
-  const y = normTeam_(b).split(' ').filter(Boolean);
+function fixtureClass_(league, home, away) {
+  const label = norm_([league, home, away].join(' '));
+  const age = label.match(/\bu(?:1[3-9]|2[0-3])\b/)?.[0] || 'adult';
+  const gender = /\b(women|woman|zene|zeny|w|wncaa)\b/.test(label)
+    ? 'women' : /\b(men|muzi)\b/.test(label) ? 'men' : 'unspecified';
+  return age + '|' + gender;
+}
+
+function teamWords_(name, ignoreWomen) {
+  let tokens = normTeam_(name).split(' ').filter(Boolean);
+  if (ignoreWomen) tokens = tokens.filter(t => !['w', 'women', 'woman'].includes(t));
+  return tokens;
+}
+
+function teamCore_(name, ignoreWomen) {
+  const parts = teamWords_(name, ignoreWomen);
+  const citySuffix = new Set([
+    'athens', 'moscow', 'saint', 'petersburg', 'chelyabinsk',
+    'kursk', 'vratsa', 'doha', 'nicosia', 'kedainiai', 'aleksandrovac',
+    'safed', 'le', 'tsion'
+  ]);
+  while (parts.length > 1 && citySuffix.has(parts[parts.length - 1])) parts.pop();
+  return parts.join(' ');
+}
+
+function sameTeam_(a, b, ignoreWomen) {
+  const x = teamWords_(a, ignoreWomen), y = teamWords_(b, ignoreWomen);
   if (!x.length || !y.length) return false;
   if (x.join(' ') === y.join(' ')) return true;
-  const protectedWords = new Set(['women','woman','w','men','u18','u19','u20',
-    'u21','u22','u23','reserves','reserve','academy','junior','juniors','ii','iii','b','2']);
+  const protectedWords = new Set(['women', 'woman', 'w', 'men', 'u18', 'u19', 'u20',
+    'u21', 'u22', 'u23', 'reserves', 'reserve', 'academy', 'junior', 'juniors',
+    'ii', 'iii', 'b', '2']);
   const sig = tokens => tokens.filter(w => protectedWords.has(w)).sort().join('|');
   if (sig(x) !== sig(y)) return false;
-  const [shorter, longer] = x.length < y.length ? [x, y] : [y, x];
-  if (longer.length - shorter.length > 2) return false;
-  if (shorter.some((w, i) => w !== longer[i])) return false;
-  const city = new Set(['athens','moscow','saint','petersburg','chelyabinsk',
-    'kursk','vratsa','doha','nicosia','kedainiai']);
-  return longer.slice(shorter.length).every(w => city.has(w));
+  return teamCore_(a, ignoreWomen) === teamCore_(b, ignoreWomen);
 }
 
 function normLeague_(text) {
@@ -75,17 +107,31 @@ function sameFixture_(date, home, away, competition, row, incomingId) {
   if (matchDateKey_(date) !== matchDateKey_(row[1])) return false;
   const existingId = eventId_(row[12]);
   if (incomingId && existingId && incomingId !== existingId) return false;
-  if (!sameTeam_(home, row[3]) || !sameTeam_(away, row[4])) return false;
-  const exactTeams = (normTeam_(home) === normTeam_(row[3])
-    && normTeam_(away) === normTeam_(row[4]));
+  const incomingClass = fixtureClass_(competition, home, away);
+  const oldClass = fixtureClass_(row[2], row[3], row[4]);
+  if (incomingClass !== oldClass) return false;
+
+  const ignoreWomen = incomingClass.endsWith('|women');
+  const forward = sameTeam_(home, row[3], ignoreWomen) &&
+    sameTeam_(away, row[4], ignoreWomen);
+  const reverse = sameTeam_(home, row[4], ignoreWomen) &&
+    sameTeam_(away, row[3], ignoreWomen);
+  if (!forward && !reverse) return false;
+
   const leagueA = normLeague_(competition);
   const leagueB = normLeague_(row[2]);
   if (!leagueA || !leagueB) return false;
-  if (leagueA === leagueB) return true;
-  if (!exactTeams) return false;
-  // Never join a men's match to a women's or youth competition by name alone.
-  const qualifier = t => t.match(/\b(women|woman|u18|u19|u20|u21|u22|u23|junior|youth)\b/g)?.sort().join('|') || '';
-  return qualifier(leagueA) === qualifier(leagueB);
+
+  // Trust two equal, distinctive team identities on the same date, even if
+  // providers translate competition names or reverse team order.
+  const hCore = teamCore_(home, ignoreWomen);
+  const aCore = teamCore_(away, ignoreWomen);
+  const rHCore = teamCore_(row[3], ignoreWomen);
+  const rACore = teamCore_(row[4], ignoreWomen);
+  const identicalPairs = forward && hCore === rHCore && aCore === rACore;
+  const reversePairs = reverse && hCore === rACore && aCore === rHCore;
+  if (identicalPairs || reversePairs) return true;
+  return leagueA === leagueB;
 }
 
 function chooseMatch_(rows, date, home, away, competition, incomingId) {
@@ -95,12 +141,17 @@ function chooseMatch_(rows, date, home, away, competition, incomingId) {
       candidates.push(ix);
   }
   if (!candidates.length) return -1;
-  // If several old duplicates exist, prefer an identified master row.
   const ids = new Set(candidates.map(ix => eventId_(rows[ix][12])).filter(Boolean));
   if (ids.size > 1) return -1;
   if (incomingId && ids.size && !ids.has(incomingId)) return -1;
   const withId = candidates.filter(ix => eventId_(rows[ix][12]));
-  return (withId.length ? withId : candidates)[0];
+  if (withId.length) return withId[0];
+  // If several different candidates have no verified ID, do not arbitrarily
+  // pick one that could represent a second match on the same date.
+  const exactLeague = candidates.filter(ix =>
+    normLeague_(rows[ix][2]) === normLeague_(competition));
+  if (exactLeague.length === 1) return exactLeague[0];
+  return candidates.length === 1 ? candidates[0] : -1;
 }
 
 function eventId_(text) {
