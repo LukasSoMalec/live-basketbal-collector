@@ -1,5 +1,5 @@
 import unittest
-from collector import parse_synot, parse_football, split_teams
+from collector import parse_synot, parse_football, parse_fonbet, split_teams
 
 
 class ParserTests(unittest.TestCase):
@@ -45,6 +45,45 @@ class ParserTests(unittest.TestCase):
         self.assertIsNone(parse_synot({"Result": 0}))
         self.assertEqual(parse_synot({"Result": 1, "ReturnValue": [
             {"Name": "Basketbal", "DisciplineID": 21, "Events": []}]}), [])
+
+    def test_fonbet_live_basketball_only(self):
+        data = {
+            "fromVersion": 0, "packetVersion": 123456,
+            "sports": [
+                {"id": 1, "kind": "sport", "alias": "basketball", "name": "Basketball"},
+                {"id": 11, "parentId": 1, "name": "EuroCup Women"},
+                {"id": 2, "kind": "sport", "alias": "football", "name": "Football"},
+                {"id": 12, "parentId": 2, "name": "Premier League"},
+                {"id": 13, "parentId": 1, "name": "NBA 2K EsportsBattle"},
+            ],
+            "events": [
+                {"id": 999, "sportId": 11, "level": 1, "kind": 1, "place": "live",
+                 "team1": "TTT Riga", "team2": "Elizur Ramla",
+                 "startTime": 1793633400},
+                {"id": 1000, "sportId": 11, "level": 1, "kind": 1, "place": "line",
+                 "team1": "Soon", "team2": "Later", "startTime": 1793633400},
+                {"id": 1001, "sportId": 11, "level": 2, "kind": 100401, "place": "live",
+                 "team1": "Quarter", "team2": "Event", "startTime": 1793633400},
+                {"id": 1002, "sportId": 12, "level": 1, "kind": 1, "place": "live",
+                 "team1": "Arsenal", "team2": "Chelsea", "startTime": 1793633400},
+                {"id": 1003, "sportId": 13, "level": 1, "kind": 1, "place": "live",
+                 "team1": "LA Lakers (Panda)", "team2": "Boston (Ghost)",
+                 "startTime": 1793633400},
+            ],
+            "eventMiscs": [{"eventId": 999, "score1": 55, "score2": 50}],
+        }
+        parsed = parse_fonbet(data)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].providerId, "999")
+        self.assertEqual(parsed[0].competition, "EuroCup Women")
+        self.assertEqual(parsed[0].score, "55:50")
+        self.assertEqual(parsed[0].date, "2026-11-02")
+
+    def test_fonbet_rejects_delta_and_invalid_schema(self):
+        base = {"sports": [], "events": []}
+        self.assertEqual(parse_fonbet(base), [])
+        self.assertIsNone(parse_fonbet({"events": []}))
+        self.assertIsNone(parse_fonbet({**base, "fromVersion": 10472}))
 
     def test_team_split_with_dashes(self):
         self.assertEqual(split_teams("BC Khimki - CSKA-2 Moscow"),
