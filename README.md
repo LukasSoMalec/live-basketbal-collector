@@ -2,7 +2,7 @@
 
 Sběr veřejné LIVE basketbalové nabídky ze SynotTipu, Football.com, Fonbetu a 1xBitu. Výsledky se ukládají do existující Google tabulky s jedním řádkem na zápas a indikátory pokrytí jednotlivých zdrojů.
 
-**Stav: připravené k ostrému testu.** SynotTip používá Playwright (zachytává skutečné POST odpovědi `GetLiveEventsWL` z otevřené stránky), Football.com využívá JSON API. U Fonbetu a 1xBitu se zatím pouze zjišťuje dostupnost a struktura jejich API; jejich zápasy se dosud nezapisují, protože parsery nejsou ověřené. SynotTip z GitHub-hosted runneru také zatím nebyl otestován.
+**Stav: SynotTip + Football.com ostrým testem ověřené.** SynotTip používá Playwright (zachytává skutečné POST odpovědi `GetLiveEventsWL` z otevřené stránky). Football.com nejprve zkouší veřejné JSON API a při jeho HTTP 202 nebo jiné neplatné odpovědi přechází na zachycení skutečné API odpovědi v Chromium, případně stejnooriginový fetch. Ostrý test 2026-11-02 zachytil Football.com 20 LIVE basketbalových zápasů; 17 zachytil SynotTip. U Fonbetu a 1xBitu zatím jen zjišťujeme dostupnost a strukturu API, protože parsery nejsou ověřené. Nedostupnost zdroje není důkaz, že zápas nebyl nabízen.
 
 ## Plánované spouštění
 
