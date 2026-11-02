@@ -1,5 +1,5 @@
 import unittest
-from collector import parse_synot, parse_football, parse_fonbet, split_teams
+from collector import Match, Source, parse_synot, parse_football, parse_fonbet, split_teams, reconcile_fonbet_references
 
 
 class ParserTests(unittest.TestCase):
@@ -104,6 +104,44 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(parse_fonbet(base), [])
         self.assertIsNone(parse_fonbet({"events": []}))
         self.assertIsNone(parse_fonbet({**base, "fromVersion": 10472}))
+
+    def test_fonbet_reconciles_only_unique_verified_sport_radar_match(self):
+        football = Source("Football.com", status="ÚSPĚCH", matches=[
+            Match("BC Khimki Moscow", "BC Chelbasket Chelyabinsk",
+                  "Super League", "2026-11-02", "sr:match:74496890"),
+            Match("Dubai Basketball", "KK Zadar", "ABA", "2026-11-02",
+                  "sr:match:74131950"),
+        ])
+        fonbet = Source("Fonbet", status="ÚSPĚCH", matches=[
+            Match("Khimki", "Chelbasket", "Russia Superleague",
+                  "2026-11-02", providerId="15001"),
+            Match("Dubai Basketball", "KK Zadar", "ABA",
+                  "2026-11-02", providerId="15002"),
+            Match("Some Club", "Another Club", "Other",
+                  "2026-11-02", providerId="15003"),
+            Match("Khimki", "Chelbasket", "Other",
+                  "2026-11-03", providerId="15004"),
+        ])
+        count = reconcile_fonbet_references([football, fonbet])
+        self.assertEqual(count, 2)
+        self.assertEqual([m.eventId for m in fonbet.matches],
+                         ["sr:match:74496890", "sr:match:74131950", "", ""])
+
+    def test_fonbet_ref_match_rejects_ambiguous_reference(self):
+        a = Source("SynotTip", matches=[
+            Match("Dubai Basketball", "KK Zadar", "ABA",
+                  "2026-11-02", "sr:match:12345678"),
+        ])
+        b = Source("Football.com", matches=[
+            Match("Dubai Basketball", "KK Zadar", "ABA",
+                  "2026-11-02", "sr:match:87654321"),
+        ])
+        fonbet = Source("Fonbet", matches=[
+            Match("Dubai Basketball", "KK Zadar", "ABA",
+                  "2026-11-02", providerId="1"),
+        ])
+        self.assertEqual(reconcile_fonbet_references([a, b, fonbet]), 0)
+        self.assertEqual(fonbet.matches[0].eventId, "")
 
     def test_team_split_with_dashes(self):
         self.assertEqual(split_teams("BC Khimki - CSKA-2 Moscow"),
