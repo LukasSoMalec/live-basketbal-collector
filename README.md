@@ -8,7 +8,7 @@ Sběr veřejné LIVE basketbalové nabídky ze SynotTipu, Football.com, Fonbetu 
 
 GitHub Actions workflow `.github/workflows/live-basketball.yml` je nastaven na **každých 15 minut** (UTC `:00`, `:15`, `:30`, `:45`; stejné minuty platí v ČR). GitHub může plánované spuštění opozdit.
 
-**Ochrana před spotřebou minut:** automatický job poběží až po nastavení repozitářové proměnné `ENABLE_LIVE_COLLECTOR=true`. Ruční `workflow_dispatch` lze spustit i bez této proměnné, pokud jsou nastavené secrets. U 96 spuštění denně může být spotřeba GitHub Actions v soukromém repozitáři významná (a potenciálně placená); před zapnutím průběžně sleduj měsíční limit a dobu běhu. Vypnutí: změň proměnnou na `false` nebo ji smaž.
+**Automatické spouštění je aktivní.** První ostrý test 2026-11-02 prošel: SynotTip 16 LIVE zápasů a 8 nových řádků zapsaných do Google Sheets. GitHub Actions může běhy opozdit. U 96 spuštění denně může být spotřeba minut v soukromém repozitáři významná (a případně placená). Pozastavení: GitHub → Actions → LIVE basketbal - 4 sazkovky → menu `...` → Disable workflow. Bez nového workflow už nebudou běžet kontroly.
 
 ## Propojení Google Sheets (jednorázově)
 
@@ -19,7 +19,7 @@ Cílová tabulka: https://docs.google.com/spreadsheets/d/1LWy7tTceA-kP_OMSlNRm1c
 3. Apps Script → **Nasadit → Nové nasazení → Webová aplikace**. „Spustit jako“ nastav **já**, „Kdo má přístup“ **Kdokoli**. Autorizuj přístup a zkopíruj URL končící `/exec`.
 4. GitHub → **Settings → Secrets and variables → Actions → Secrets**: přidej `SHEETS_WEBAPP_URL` = URL z kroku 3 a `SHEETS_INGEST_KEY` = přesně stejný soukromý klíč.
 5. GitHub → **Actions → LIVE basketbal - 4 sazkovky → Run workflow**. Zkontroluj logy, případně artefakt `output/latest.json`, a potvrď zápis do záložek **Kontroly**, **Zdroje**, **Zápasy**.
-6. Po úspěšném testu GitHub → **Settings → Secrets and variables → Actions → Variables**: nastav `ENABLE_LIVE_COLLECTOR=true`. Teprve tím se zapne automatický patnáctiminutový běh.
+6. Po úspěšném testu je už patnáctiminutový plán v GitHub Actions aktivovaný. Průběh sleduj v **Actions** a výsledky kontroluj v Google Sheets. Žádnou proměnnou `ENABLE_LIVE_COLLECTOR` už není nutné nastavovat.
 
 Bez přítomnosti obou secrets workflow při ručním spuštění skončí chybou ještě před instalací Pythonu a prohlížeče. Veřejná Apps Script URL nevydává právo k zápisu bez tajného klíče; přesto je tento model nutné chápat jako jednoduchý ingest endpoint, nikoli detailní autentizační systém.
 
