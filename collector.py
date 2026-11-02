@@ -17,6 +17,7 @@ from playwright.async_api import async_playwright
 TZ = ZoneInfo("Europe/Prague")
 SYN_URL = "https://sport.synottip.cz/live"
 FOOT_API = "https://www.football.com/api/ng/factsCenter/configurableLiveOrPrematchEvents?sportId=sr%3Asport%3A2"
+FOOT_PAGE = "https://www.football.com/ng/m/sport/basketball/live_list"
 FON_URL = "https://fonbet.com.cy/live/basketball"
 FON_API = "https://line02.cy8cff-resources.com/events/list?lang=en&version=87839860670&scopeMarket=1700"
 BIT_URL = "https://1xbit-8976.pro/cs/live/basketball"
@@ -190,21 +191,99 @@ async def synot(browser) -> Source:
     return s
 
 
-async def football(client: httpx.AsyncClient) -> Source:
+async def football(browser, client: httpx.AsyncClient) -> Source:
+    """Use public JSON directly; if it returns an HTML/202 response, read the
+    website's own JSON traffic via Chromium (no account or copied cookies).
+    """
     s = Source("Football.com")
+    notes = []
     try:
-        response = await client.get(FOOT_API, timeout=25)
-        response.raise_for_status()
-        parsed = parse_football(response.json())
-        if parsed is None:
-            s.error = "Unexpected Football API schema."
+        response = await client.get(FOOT_API, timeout=15)
+        if response.status_code == 200:
+            try:
+                parsed = parse_football(response.json())
+                if parsed is not None:
+                    s.matches, s.status = parsed, "ÚSPĚCH"
+                    return s
+                notes.append("Direct API: unexpected schema")
+            except ValueError:
+                notes.append("Direct API: non-JSON response")
         else:
-            s.matches, s.status = parsed, "ÚSPĚCH"
+            notes.append("Direct API HTTP " + str(response.status_code))
     except Exception as exc:
-        s.error = "Football API: " + type(exc).__name__
+        notes.append("Direct API: " + type(exc).__name__)
+
+    ctx = await browser.new_context(locale="en-US", timezone_id="Europe/Prague")
+    page = await ctx.new_page()
+    snapshots: list[list[Match]] = []
+    tasks = set()
+
+    async def observe(res):
+        try:
+            if res.status != 200:
+                notes.append("Browser API HTTP " + str(res.status))
+                return
+            parsed = parse_football(await res.json())
+            if parsed is None:
+                notes.append("Browser API: unexpected schema")
+            else:
+                snapshots.append(parsed)
+        except Exception as exc:
+            notes.append("Browser API: " + type(exc).__name__)
+
+    def on_response(res):
+        if "configurableLiveOrPrematchEvents" not in res.url:
+            return
+        task = asyncio.create_task(observe(res))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    page.on("response", on_response)
+    try:
+        await page.goto(FOOT_PAGE, wait_until="domcontentloaded", timeout=30000)
+        await page.wait_for_timeout(8500)
+        if tasks:
+            await asyncio.gather(*list(tasks), return_exceptions=True)
+
+        if not snapshots and page.url.startswith("https://www.football.com/"):
+            # Same-origin fetch from the already opened public LIVE page. An
+            # HTTP 202 / challenge is NOT considered a successful match list.
+            result = await page.evaluate("""async url => {
+                try {
+                    const res = await fetch(url, {credentials: 'same-origin', cache: 'no-store'});
+                    if (res.status !== 200) return {status: res.status};
+                    if (!(res.headers.get('content-type') || '').includes('json'))
+                        return {status: 200, error: 'non-JSON'};
+                    return {status: 200, data: await res.json()};
+                } catch (err) {
+                    return {error: String(err).slice(0, 120)};
+                }
+            }""", FOOT_API)
+            if result.get("status") == 200 and "data" in result:
+                parsed = parse_football(result["data"])
+                if parsed is not None:
+                    snapshots.append(parsed)
+                else:
+                    notes.append("In-page API: unexpected schema")
+            else:
+                notes.append("In-page API status: " + str(result.get("status", result.get("error", "?"))))
+            if tasks:
+                await asyncio.gather(*list(tasks), return_exceptions=True)
+
+        if snapshots:
+            s.matches = dedup([m for snap in snapshots for m in snap])
+            s.status = "ÚSPĚCH"
+        else:
+            s.error = "; ".join(dict.fromkeys(notes))[:450] or "No valid LIVE JSON found in browser"
+    except Exception as exc:
+        notes.append("Browser: " + type(exc).__name__)
+        s.error = "; ".join(dict.fromkeys(notes))[:450]
+    finally:
+        await ctx.close()
+
+    # Complete coverage is not proven even when the API returns valid JSON.
     s.complete = False
     return s
-
 
 async def inspect_source(browser, client, name, page_url, api_url, needle):
     """Probe other feeds without treating unverified structure as match coverage."""
@@ -267,7 +346,7 @@ async def collect():
                 headers={"User-Agent": "Mozilla/5.0 (LIVE-Coverage-Monitor)",
                          "Accept": "application/json, text/plain, */*"}) as client:
                 sources = await asyncio.gather(
-                    synot(browser), football(client),
+                    synot(browser), football(browser, client),
                     inspect_source(browser, client, "Fonbet", FON_URL, FON_API, "/events/list"),
                     inspect_source(browser, client, "1xBit", BIT_URL, BIT_API, "/games1x2"))
         finally:
