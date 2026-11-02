@@ -3,6 +3,10 @@ on:
   schedule:
     - cron: '0,20,40 * * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-basketball.yml'
 permissions:
   contents: read
 concurrency:
