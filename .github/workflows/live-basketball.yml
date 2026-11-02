@@ -1,0 +1,53 @@
+name: LIVE basketbal - 4 sazkovky
+on:
+  schedule:
+    - cron: '0,15,30,45 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: live-basketball
+  cancel-in-progress: false
+jobs:
+  collect:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_LIVE_COLLECTOR == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SHEETS_WEBAPP_URL: ${{ secrets.SHEETS_WEBAPP_URL }}
+      SHEETS_INGEST_KEY: ${{ secrets.SHEETS_INGEST_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check destination configuration
+        shell: bash
+        run: |
+          if [[ -z "$SHEETS_WEBAPP_URL" || -z "$SHEETS_INGEST_KEY" ]]; then
+            echo "Missing SHEETS_WEBAPP_URL or SHEETS_INGEST_KEY. Configure GitHub Actions secrets first."
+            exit 1
+          fi
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Cache Playwright browser
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-v1-1.55
+      - name: Install Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: python -m playwright install chromium
+      - name: Run parser tests
+        run: python -m unittest tests.test_parsers -v
+      - name: Collect and update sheet
+        run: python collector.py
+      - name: Save last snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-basketball-${{ github.run_id }}
+          path: output/latest.json
+          retention-days: 7
+          if-no-files-found: ignore
