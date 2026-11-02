@@ -755,7 +755,7 @@ async def main():
     if not url or not key:
         LOG.warning("Missing SHEETS_WEBAPP_URL or SHEETS_INGEST_KEY: DRY RUN, no Sheets write")
         return
-    async with httpx.AsyncClient(follow_redirects=True, timeout=45) as client:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=150) as client:
         res = await client.post(url, json={**data, "key": key})
         res.raise_for_status()
         output = res.json()
