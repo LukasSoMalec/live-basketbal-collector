@@ -221,6 +221,82 @@ def parse_fonbet(payload: Any) -> list[Match] | None:
     return dedup(found)
 
 
+
+def parse_1xbit(payload: Any) -> list[Match] | None:
+    """Parse verified 1xBit v3 main-live-feed list (not the legacy 1xBet API).
+
+    sport.id=3 is basketball; menuSection=2 and a nonzero current period
+    distinguish in-play games from scheduled entries. Reject simulated leagues,
+    sub-games, and incomplete/unknown JSON rather than fabricate coverage.
+    """
+    if not isinstance(payload, list):
+        return None
+    if payload and not any(isinstance(x, dict) and
+                           isinstance(x.get("sport"), dict) and
+                           isinstance(x.get("liga"), dict) and
+                           "opponent1" in x and "opponent2" in x
+                           for x in payload):
+        return None
+    matches = []
+    for event in payload:
+        if not isinstance(event, dict):
+            continue
+        sport = event.get("sport")
+        league = event.get("liga")
+        scores = event.get("scores")
+        if not all(isinstance(x, dict) for x in (sport, league, scores)):
+            continue
+        if str(sport.get("id", "")) != "3":
+            continue
+        if str(event.get("menuSection", "")) != "2":
+            continue
+        if event.get("kind") is not None and str(event["kind"]) != "1":
+            continue
+        eid = str(event.get("id") or "")
+        main_id = str(event.get("mainGameId") or "")
+        if not eid or (main_id and eid != main_id):
+            continue
+        try:
+            period = int(scores.get("currentPeriod") or 0)
+        except (TypeError, ValueError):
+            continue
+        if period < 1:
+            continue
+
+        def name(obj):
+            if isinstance(obj, str):
+                return obj.strip()
+            if not isinstance(obj, dict):
+                return ""
+            return str(obj.get("fullNameEng") or obj.get("fullName") or
+                       obj.get("nameEng") or obj.get("name") or "").strip()
+
+        home, away = name(event.get("opponent1")), name(event.get("opponent2"))
+        competition = name(league)
+        if not home or not away or not competition:
+            continue
+        if is_simulated(competition, home, away):
+            continue
+        if re.search(r"(?i)(?:\bipbl\b|nba\s*2k\d*|\b2k2\d\b|"
+                     r"esportsbattle|cyber|virtual|gg league|"
+                     r"\be-?basket(?:ball)?\b)",
+                     " ".join((competition, home, away))):
+            continue
+        state = str(scores.get("currentPeriodName") or
+                    scores.get("statusLineStr") or "")
+        if re.search(r"(?i)(not started|not begun|finished|final|"
+                     r"match ended|nezač|skončil|ukončen)", state):
+            continue
+        date = local_date(event.get("startTs"))
+        if not date:
+            continue
+        sc1, sc2 = scores.get("scoreOpp1"), scores.get("scoreOpp2")
+        score = (f"{sc1}:{sc2}" if sc1 is not None and sc2 is not None else
+                 str(scores.get("fullScore") or "").replace("-", ":"))
+        matches.append(Match(home, away, competition, date, "", eid, state, score))
+    return dedup(matches)
+
+
 async def synot(browser) -> Source:
     """Let the site's own JS create its POST session; observe ONLY responses."""
     s = Source("SynotTip")
@@ -445,6 +521,28 @@ async def fonbet(browser, client: httpx.AsyncClient, wait_ms: int = 7000) -> Sou
     return src
 
 
+
+async def one_xbit(client: httpx.AsyncClient) -> Source:
+    """Collect from public 1xBit JSON API, no cookies or browser bypass."""
+    src = Source("1xBit")
+    try:
+        response = await client.get(BIT_API, timeout=20)
+        if response.status_code != 200:
+            src.error = "API HTTP " + str(response.status_code)
+            return src
+        parsed = parse_1xbit(response.json())
+        if parsed is None:
+            src.error = "Unexpected 1xBit LIVE JSON schema"
+            return src
+        src.matches = parsed
+        src.status = "ÚSPĚCH"
+    except Exception as exc:
+        src.error = "1xBit API: " + type(exc).__name__
+    # The request has count=40 and may be a partial page, so never infer NE.
+    src.complete = False
+    return src
+
+
 async def inspect_source(browser, client, name, page_url, api_url, needle):
     """Probe other feeds without treating unverified structure as match coverage."""
     s = Source(name)
@@ -558,6 +656,45 @@ def reconcile_fonbet_references(sources: list[Source]) -> int:
     return linked
 
 
+_1XBIT_PAIR_ALIASES_RAW = [
+    (("Zenit Saint-Petersburg", "KK Igokea"),
+     ("Zenit Saint Petersburg", "Igokea Aleksandrovac")),
+    (("Mega", "Spartak Subotica"),
+     ("KK Mega Basket", "Spartak Subotica")),
+    (("Besiktas (Women)", "Maccabi Bnot Ashdod (Women)"),
+     ("Besiktas JK", "Maccabi Ashdod")),
+]
+_1XBIT_PAIR_ALIASES = {
+    _pair_key(*bit_names): _pair_key(*reference_names)
+    for bit_names, reference_names in _1XBIT_PAIR_ALIASES_RAW
+}
+
+
+def reconcile_1xbit_references(sources: list[Source]) -> int:
+    """Attach verified, unique SportRadar IDs; never infer IDs from 1xBit IDs."""
+    ids_by_pair: dict[tuple[str, tuple[str, str]], set[str]] = {}
+    for src in sources:
+        if src.source not in ("SynotTip", "Football.com", "Fonbet"):
+            continue
+        for m in src.matches:
+            if re.fullmatch(r"sr:match:\d{5,}", m.eventId or ""):
+                key = (m.date, _pair_key(m.home, m.away))
+                ids_by_pair.setdefault(key, set()).add(m.eventId)
+
+    linked = 0
+    for src in sources:
+        if src.source != "1xBit":
+            continue
+        for match in src.matches:
+            pair = _pair_key(match.home, match.away)
+            canonical_pair = _1XBIT_PAIR_ALIASES.get(pair, pair)
+            ids = ids_by_pair.get((match.date, canonical_pair), set())
+            if len(ids) == 1:
+                match.eventId = next(iter(ids))
+                linked += 1
+    return linked
+
+
 async def collect():
     stamp = datetime.now(timezone.utc).isoformat()
     async with async_playwright() as pw:
@@ -570,11 +707,13 @@ async def collect():
                 sources = await asyncio.gather(
                     synot(browser), football(browser, client),
                     fonbet(browser, client),
-                    inspect_source(browser, client, "1xBit", BIT_URL, BIT_API, "/games1x2"))
+                    one_xbit(client))
         finally:
             await browser.close()
     linked = reconcile_fonbet_references(sources)
     LOG.info("Fonbet: %s exact/known-alias matches linked to a unique SportRadar ID", linked)
+    bit_linked = reconcile_1xbit_references(sources)
+    LOG.info("1xBit: %s verified pair matches linked to SportRadar IDs", bit_linked)
     payload = {"checkedAt": stamp, "sources": [s.as_dict() for s in sources]}
     Path("output").mkdir(exist_ok=True)
     Path("output/latest.json").write_text(
