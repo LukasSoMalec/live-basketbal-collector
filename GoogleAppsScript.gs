@@ -465,6 +465,11 @@ function saveSnapshot_(body) {
   const cleanup = planHistoricalDeduplication_(rows, stamp);
   for (const ix of cleanup.modified) touched.add(ix);
   const removedIndices = new Set(cleanup.deleteIndices);
+  // Distinct source/fixture observations after merging; the same poll must
+  // never be counted twice solely because the two sites used different names.
+  const uniqueObservations = [...seenThisPoll.values()]
+    .reduce((sum, indices) => sum +
+      new Set([...indices].map(ix => cleanup.masterByIndex.get(ix))).size, 0);
 
   // Write adjacent touched rows in one operation instead of dozens of calls.
   // Leave untouched rows (and any formulas they may contain) unchanged.
@@ -509,13 +514,13 @@ function saveSnapshot_(body) {
   const counts = SOURCES.map(summaryStatus);
   checksSheet.appendRow([stamp, counts[0].status, counts[0].count, counts[1].status, counts[1].count,
     counts[2].status, counts[2].count, counts[3].status, counts[3].count,
-    `${created - cleanup.deleteIndices.filter(ix => ix >= oldCount).length} nových zápasů, ${addedObservations} dostupností; ${cleanup.merged} sloučených duplicit, ${cleanup.reviewCandidates} k prověření; zdroje s neověřenou úplností nejsou použity k označení NE`]);
+    `${created - cleanup.deleteIndices.filter(ix => ix >= oldCount).length} nových zápasů, ${uniqueObservations} dostupností; ${cleanup.merged} sloučených duplicit, ${cleanup.reviewCandidates} k prověření; zdroje s neověřenou úplností nejsou použity k označení NE`]);
   srcSheet.getRange(2, 3, 4, 4).setValues(SOURCES.map((name, i) => {
     const s = sourceMap.get(name) || {};
     return [stamp, counts[i].status, counts[i].count, String(s.error || '').slice(0, 450)];
   }));
   return {ok: true, created: created - cleanup.deleteIndices.filter(ix => ix >= oldCount).length,
     currentRows: rows.length - cleanup.merged, mergedDuplicates: cleanup.merged,
-    reviewCandidates: cleanup.reviewCandidates, positiveObservations: addedObservations,
+    reviewCandidates: cleanup.reviewCandidates, positiveObservations: uniqueObservations,
     sources: SOURCES.map((name, i) => ({name, ...counts[i]}))};
 }
