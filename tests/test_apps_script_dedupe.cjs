@@ -98,8 +98,94 @@ function testMultipleIdsAcrossThirdVariantNotTransitive() {
   assert.notEqual(rows[0][12].includes('sr:match:22222222'),true);
 }
 
+
+class FakeSheet {
+  constructor(rows = []) { this.rows = rows.map(r => r.slice()); }
+  getLastRow() {
+    let n = this.rows.length;
+    while (n > 0 && this.rows[n-1].every(v => v === '')) n--;
+    return n;
+  }
+  getRange(r, c, n=1, w=1) {
+    const self = this;
+    return {
+      getValues() {
+        return Array.from({length:n}, (_, i) =>
+          Array.from({length:w}, (_, j) => self.rows[r+i-1]?.[c+j-1] ?? ''));
+      },
+      setValues(values) {
+        assert.equal(values.length, n);
+        for (let i=0; i<n; i++) {
+          assert.equal(values[i].length, w);
+          while (self.rows.length < r+i) self.rows.push([]);
+          for (let j=0; j<w; j++) self.rows[r+i-1][c+j-1] = values[i][j];
+        }
+      },
+    };
+  }
+  appendRow(row) { this.rows.push(row.slice()); }
+  deleteRows(r, n) {
+    assert(r > 1, 'Never delete the match header');
+    this.rows.splice(r-1, n);
+  }
+  setFrozenRows() {}
+}
+
+function runMockIngestion() {
+  const master=row('Greece. Elite League','AS Papagou','Panionios Athens',
+    5,'sr:match:73113286', '2026-11-02 15:00:00',
+    '2026-11-02 16:00:00', 3);
+  const other=row('Greece. Elite League','Papagou','Panionios',7,'1xBit: Q2',
+    '2026-11-02 15:30:00', '2026-11-02 16:05:00', 2);
+  const games=new FakeSheet([Array(13).fill('HEADER'), master,other]);
+  const checks=new FakeSheet([]);
+  const sources=new FakeSheet([Array(6).fill('H')]);
+  const sheets={Zápasy:games,Kontroly:checks,Zdroje:sources};
+  context.SpreadsheetApp={
+    openById() {
+      return {
+        getSheetByName(name) {return sheets[name]||null;},
+        insertSheet(name) {sheets[name]=new FakeSheet();return sheets[name];}
+      };
+    }
+  };
+  const payload={
+    checkedAt:'2026-11-02T19:00:00Z',
+    sources:['SynotTip','Fonbet','1xBit','Football.com']
+      .map(source=>({source,status:'ÚSPĚCH',complete:false,matches:[]}))
+  };
+  const result=context.saveSnapshot_(payload);
+  assert.equal(result.ok,true);
+  assert.equal(result.mergedDuplicates,1);
+  assert.equal(result.currentRows,1);
+  assert.equal(games.getLastRow(),2);
+  assert.equal(games.rows[1][5],'ANO');
+  assert.equal(games.rows[1][7],'ANO');
+  assert.equal(games.rows[1][9],'2026-11-02 15:00:00');
+  assert.equal(games.rows[1][10],'2026-11-02 16:05:00');
+  assert.equal(games.rows[1][11],3);
+  assert.equal(sheets['Archiv duplicit'].rows.length,4);
+  assert.equal(sheets['Archiv duplicit'].rows[0].length,17);
+  const second=context.saveSnapshot_(payload);
+  assert.equal(second.mergedDuplicates,0);
+  assert.equal(games.getLastRow(),2);
+  assert.equal(sheets['Archiv duplicit'].rows.length,4);
+  assert.equal(checks.rows.length,2);
+
+  const alternative=row('Greece. Elite League','AS Papagou','Panionios',
+    7,'sr:match:99999999');
+  games.rows.push(alternative);
+  const flagged=context.saveSnapshot_(payload);
+  assert.equal(flagged.mergedDuplicates,0);
+  assert.equal(flagged.reviewCandidates,2);
+  assert.equal(games.rows.length,3);
+  assert.match(games.rows[1][12],/ZKONTROLOVAT DUPLIKAT/);
+  assert.match(games.rows[2][12],/ZKONTROLOVAT DUPLIKAT/);
+}
+
 testMultipleAliasesMergeAndAudit();
 testKnownIdOverridesNameDifferenceButNotGender();
 testConflictAndCategoriesRemainSeparateAndFlagged();
 testMultipleIdsAcrossThirdVariantNotTransitive();
-console.log('Historical duplicate detection, merge, audit and conflict tests passed');
+runMockIngestion();
+console.log('Historical duplicate detection, full mock ingest, audit and conflict tests passed');
