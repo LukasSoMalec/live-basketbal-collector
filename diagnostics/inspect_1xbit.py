@@ -8,8 +8,10 @@ from collections import Counter
 import httpx
 from collector import BIT_API
 
-DISPLAY = ("I", "O1", "O2", "L", "LE", "SN", "SI", "S", "SC", "M", "IsLive",
-           "G", "N", "B", "T", "LI", "CN", "CI", "C", "S1", "S2", "ST", "P", "K")
+DISPLAY = ("sport", "liga", "opponent1", "opponent2", "matchInfo",
+           "scores", "id", "mainGameId", "startTs", "fullName", "kind",
+           "gameTypeName", "periodName", "gameVidName", "menuSection",
+           "constId", "countryId", "zonePlay")
 
 def brief(record):
     if not isinstance(record, dict):
@@ -57,7 +59,7 @@ async def main():
             print("first records:")
             for n, record in enumerate(data[:3]):
                 print("record", n, brief(record))
-            for k in ("SI", "SN", "S", "L", "LE", "G", "M", "IsLive"):
+            for k in ("kind", "gameTypeName", "periodName", "menuSection", "sport", "liga"):
                 counter = Counter(str(x.get(k))[:45] for x in data if isinstance(x,dict))
                 print("distribution", k, counter.most_common(8))
         else:
