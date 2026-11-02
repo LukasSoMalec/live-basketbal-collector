@@ -1,0 +1,302 @@
+#!/usr/bin/env python3
+"""LIVE basketball coverage from public feeds; no account login or bets."""
+import asyncio
+import json
+import logging
+import os
+import re
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+from zoneinfo import ZoneInfo
+
+import httpx
+from playwright.async_api import async_playwright
+
+TZ = ZoneInfo("Europe/Prague")
+SYN_URL = "https://sport.synottip.cz/live"
+FOOT_API = "https://www.football.com/api/ng/factsCenter/configurableLiveOrPrematchEvents?sportId=sr%3Asport%3A2"
+FON_URL = "https://fonbet.com.cy/live/basketball"
+FON_API = "https://line02.cy8cff-resources.com/events/list?lang=en&version=87839860670&scopeMarket=1700"
+BIT_URL = "https://1xbit-8976.pro/cs/live/basketball"
+BIT_API = ("https://1xbit-8976.pro/service-api/main-live-feed/v3/games1x2"
+           "?cfView=3&count=40&fcountry=204&gr=933&grMode=4&lng=cs&ref=65&selectedMs=1.3,2.3,10.3")
+LOG = logging.getLogger("basketball")
+
+
+@dataclass
+class Match:
+    home: str
+    away: str
+    competition: str
+    date: str
+    eventId: str = ""
+    providerId: str = ""
+    state: str = ""
+    score: str = ""
+
+
+@dataclass
+class Source:
+    source: str
+    status: str = "NEDOSTUPNÉ"
+    complete: bool = False
+    matches: list[Match] = field(default_factory=list)
+    error: str = ""
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+def local_date(value: Any) -> str:
+    try:
+        if isinstance(value, (int, float)):
+            seconds = value / (1000 if value > 10**11 else 1)
+            return datetime.fromtimestamp(seconds, TZ).date().isoformat()
+        if isinstance(value, str) and value:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return (dt.astimezone(TZ) if dt.tzinfo else dt).date().isoformat()
+    except (ValueError, OverflowError, OSError):
+        pass
+    return ""
+
+
+def split_teams(name: Any) -> tuple[str, str]:
+    if not isinstance(name, str):
+        return "", ""
+    a = re.split(r"\s+[-–]\s+", name.strip(), maxsplit=1)
+    return (a[0].strip(), a[1].strip()) if len(a) == 2 else ("", "")
+
+
+def is_simulated(*values: str) -> bool:
+    text = " ".join(str(x or "") for x in values).lower()
+    return bool(re.search(r"(?<![a-z])(ebasket|e-basket|cyber|simulated|simulation|virtual|bskt cup|esport)", text))
+
+
+def dedup(matches: list[Match]) -> list[Match]:
+    found, seen = [], set()
+    for m in matches:
+        key = m.eventId or (m.date, m.home.lower(), m.away.lower())
+        if key not in seen:
+            found.append(m)
+            seen.add(key)
+    return found
+
+
+def parse_synot(payload: Any) -> list[Match] | None:
+    """Return None on invalid response, [] on valid but empty basket response."""
+    if not isinstance(payload, dict) or payload.get("Result") != 1:
+        return None
+    groups = payload.get("ReturnValue")
+    if not isinstance(groups, list):
+        return None
+    basket = next((g for g in groups if isinstance(g, dict)
+                   and (str(g.get("DisciplineID")) == "21"
+                        or g.get("Name") in ("Basketbal", "Basketball"))), None)
+    if basket is None or not isinstance(basket.get("Events"), list):
+        return None
+    result = []
+    for e in basket["Events"]:
+        if not isinstance(e, dict) or (
+                e.get("SportExtId") and e.get("SportExtId") != "sr:sport:2"):
+            continue
+        home, away = split_teams(e.get("Name"))
+        if not home or not away or is_simulated(e.get("CategoryPath"), home, away):
+            continue
+        external = str(e.get("ExternalID") or "")
+        scores = e.get("Results") or []
+        score = next((r.get("Score", "") for r in scores
+                      if isinstance(r, dict) and r.get("MainResult")), "")
+        result.append(Match(home, away, e.get("CategoryPath") or "",
+                            local_date(e.get("Date")),
+                            "sr:match:" + external if external.isdigit() else "",
+                            str(e.get("ID") or ""), str(e.get("StateName") or ""), str(score)))
+    return dedup(result)
+
+
+def parse_football(payload: Any) -> list[Match] | None:
+    if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+        return None
+    matches = []
+    for group in payload["data"]:
+        if not isinstance(group, dict) or not isinstance(group.get("events"), list):
+            continue
+        league = group.get("name") or ""
+        for e in group["events"]:
+            if not isinstance(e, dict):
+                continue
+            if str(e.get("status")) != "1" or (
+                    (e.get("sport") or {}).get("id") != "sr:sport:2"):
+                continue
+            state = str(e.get("matchStatus") or "").strip()
+            if not state or re.search(r"not started|pre.?match|scheduled|finished|final|^ns$", state, re.I):
+                continue
+            home, away = e.get("homeTeamName") or "", e.get("awayTeamName") or ""
+            if not home or not away or is_simulated(league, home, away):
+                continue
+            event_id = str(e.get("eventId") or "")
+            matches.append(Match(home, away, league, local_date(e.get("estimateStartTime")),
+                                 event_id if event_id.startswith("sr:match:") else "",
+                                 str(e.get("gameId") or ""), state, str(e.get("setScore") or "")))
+    return dedup(matches)
+
+
+async def synot(browser) -> Source:
+    """Let the site's own JS create its POST session; observe ONLY responses."""
+    s = Source("SynotTip")
+    ctx = await browser.new_context(locale="cs-CZ", timezone_id="Europe/Prague")
+    page = await ctx.new_page()
+    snapshots = []
+    tasks = set()
+
+    async def handle(res):
+        try:
+            if res.status == 200 and res.request.method == "POST":
+                matches = parse_synot(await res.json())
+                if matches is not None:
+                    snapshots.append(matches)
+        except Exception as exc:
+            LOG.debug("Synot response parse failed: %s", type(exc).__name__)
+
+    def on_response(res):
+        if "GetLiveEventsWL" not in res.url:
+            return
+        task = asyncio.create_task(handle(res))
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
+    page.on("response", on_response)
+    try:
+        await page.goto(SYN_URL, wait_until="domcontentloaded", timeout=35000)
+        await page.wait_for_timeout(18000)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        valid = [snap for snap in snapshots if snap]
+        if valid:
+            s.matches = dedup([m for snap in valid for m in snap])
+            s.status = "ÚSPĚCH"
+        elif snapshots:
+            s.status = "ČÁSTEČNĚ"
+            s.error = "Only empty long-poll snapshots."
+        else:
+            s.error = "No valid GetLiveEventsWL POST observed."
+    except Exception as exc:
+        s.error = "Browser: " + type(exc).__name__
+    finally:
+        await ctx.close()
+    # Never infer absence from long-poll/incomplete lists.
+    s.complete = False
+    return s
+
+
+async def football(client: httpx.AsyncClient) -> Source:
+    s = Source("Football.com")
+    try:
+        response = await client.get(FOOT_API, timeout=25)
+        response.raise_for_status()
+        parsed = parse_football(response.json())
+        if parsed is None:
+            s.error = "Unexpected Football API schema."
+        else:
+            s.matches, s.status = parsed, "ÚSPĚCH"
+    except Exception as exc:
+        s.error = "Football API: " + type(exc).__name__
+    s.complete = False
+    return s
+
+
+async def inspect_source(browser, client, name, page_url, api_url, needle):
+    """Probe other feeds without treating unverified structure as match coverage."""
+    s = Source(name)
+    notes = []
+    try:
+        r = await client.get(api_url, timeout=12)
+        if r.status_code == 200:
+            data = r.json()
+            notes.append("API root keys: " + ",".join(list(data)[:12])
+                         if isinstance(data, dict) else "API root: " + type(data).__name__)
+            s.status = "ČÁSTEČNĚ"
+        else:
+            notes.append("API HTTP " + str(r.status_code))
+    except Exception as exc:
+        notes.append("API: " + type(exc).__name__)
+
+    ctx = await browser.new_context(locale="cs-CZ", timezone_id="Europe/Prague")
+    page = await ctx.new_page()
+    pending = set()
+
+    async def observe(res):
+        try:
+            if res.status == 200:
+                obj = await res.json()
+                if isinstance(obj, dict):
+                    notes.append("Browser API keys: " + ",".join(list(obj)[:12]))
+                    s.status = "ČÁSTEČNĚ"
+        except Exception:
+            pass
+
+    def callback(res):
+        if needle in res.url:
+            t = asyncio.create_task(observe(res))
+            pending.add(t)
+            t.add_done_callback(pending.discard)
+
+    page.on("response", callback)
+    try:
+        await page.goto(page_url, wait_until="domcontentloaded", timeout=25000)
+        await page.wait_for_timeout(6500)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+    except Exception as exc:
+        notes.append("Browser: " + type(exc).__name__)
+    finally:
+        await ctx.close()
+    s.error = "; ".join(dict.fromkeys(notes))[:450]
+    s.complete = False
+    return s
+
+
+async def collect():
+    stamp = datetime.now(timezone.utc).isoformat()
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True, args=["--disable-dev-shm-usage", "--no-sandbox"])
+        try:
+            async with httpx.AsyncClient(
+                follow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0 (LIVE-Coverage-Monitor)",
+                         "Accept": "application/json, text/plain, */*"}) as client:
+                sources = await asyncio.gather(
+                    synot(browser), football(client),
+                    inspect_source(browser, client, "Fonbet", FON_URL, FON_API, "/events/list"),
+                    inspect_source(browser, client, "1xBit", BIT_URL, BIT_API, "/games1x2"))
+        finally:
+            await browser.close()
+    payload = {"checkedAt": stamp, "sources": [s.as_dict() for s in sources]}
+    Path("output").mkdir(exist_ok=True)
+    Path("output/latest.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    for s in sources:
+        LOG.info("%s: %s – %s matches (%s)", s.source, s.status, len(s.matches), s.error)
+    return payload
+
+
+async def main():
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    data = await collect()
+    url = os.environ.get("SHEETS_WEBAPP_URL")
+    key = os.environ.get("SHEETS_INGEST_KEY")
+    if not url or not key:
+        LOG.warning("Missing SHEETS_WEBAPP_URL or SHEETS_INGEST_KEY: DRY RUN, no Sheets write")
+        return
+    async with httpx.AsyncClient(follow_redirects=True, timeout=45) as client:
+        res = await client.post(url, json={**data, "key": key})
+        res.raise_for_status()
+        output = res.json()
+        if output.get("ok") is not True:
+            raise RuntimeError("Google Sheets rejected write: " + str(output.get("error", "unknown")))
+        LOG.info("Sheets write OK: created %s", output.get("created"))
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
