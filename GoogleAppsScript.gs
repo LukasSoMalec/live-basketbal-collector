@@ -154,11 +154,29 @@ function saveSnapshot_(body) {
     touched.add(ix);
   }
 
-  // Existing cells: write only touched rows. New cells: append in a single block.
+  // Write adjacent touched rows in one operation instead of dozens of calls.
+  // Leave untouched rows (and any formulas they may contain) unchanged.
   const oldCount = originalRows.length;
-  for (const ix of touched) {
-    if (ix < oldCount) gamesSheet.getRange(ix + 2, 1, 1, 13).setValues([rows[ix]]);
+  const touchedExisting = [...touched].filter(ix => ix < oldCount).sort((a, b) => a - b);
+  let segmentStart = -1;
+  let segmentEnd = -1;
+  function flushSegment_() {
+    if (segmentStart === -1) return;
+    gamesSheet.getRange(segmentStart + 2, 1, segmentEnd - segmentStart + 1, 13)
+      .setValues(rows.slice(segmentStart, segmentEnd + 1));
   }
+  for (const ix of touchedExisting) {
+    if (segmentStart === -1) {
+      segmentStart = segmentEnd = ix;
+    } else if (ix === segmentEnd + 1) {
+      segmentEnd = ix;
+    } else {
+      flushSegment_();
+      segmentStart = segmentEnd = ix;
+    }
+  }
+  flushSegment_();
+
   if (rows.length > oldCount) {
     gamesSheet.getRange(oldCount + 2, 1, rows.length - oldCount, 13)
       .setValues(rows.slice(oldCount));
