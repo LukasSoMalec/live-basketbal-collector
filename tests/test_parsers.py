@@ -259,6 +259,36 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(reconcile_semantic_references([a, fon]), 0)
         self.assertTrue(all(not m.eventId for m in fon.matches))
 
+    def test_women_and_greek_aliases_match_verified_sport_radar_ids(self):
+        synot = Source("SynotTip", matches=[
+            Match("Stjarnan FC", "Fjolnir Reykjavik",
+                  "Iceland women", "2026-11-02", "sr:match:74932484"),
+        ])
+        football = Source("Football.com", matches=[
+            Match("Bnei Yehuda (Women)", "Maccabi Haifa (Women)",
+                  "Israel women", "2026-11-02", "sr:match:111111114474703"),
+            Match("Fea Nf Nx", "Enosi Iliou",
+                  "Greek A1", "2026-11-02", "sr:match:75585950"),
+        ])
+        fon = Source("Fonbet", matches=[
+            Match("Stjarnan (w)", "Fjölnir (w)", "Iceland women",
+                  "2026-11-02", providerId="101"),
+            Match("Bnei Yehuda Beava (w)", "Maccabi Haifa (w)",
+                  "Israel women", "2026-11-02", providerId="102"),
+        ])
+        bit = Source("1xBit", matches=[
+            Match("UMF Stjarnan (Women)", "Fjolnir (Women)",
+                  "Iceland women", "2026-11-02", providerId="103"),
+            Match("FEA Neas Filadelfeias Neas Chalkidonas", "Enosi Iliou",
+                  "Greece regional", "2026-11-02", providerId="104"),
+        ])
+        self.assertEqual(reconcile_fonbet_references([synot, football, fon]), 2)
+        self.assertEqual(reconcile_1xbit_references([synot, football, fon, bit]), 2)
+        self.assertEqual([m.eventId for m in fon.matches],
+                         ["sr:match:74932484", "sr:match:111111114474703"])
+        self.assertEqual([m.eventId for m in bit.matches],
+                         ["sr:match:74932484", "sr:match:75585950"])
+
     def test_team_split_with_dashes(self):
         self.assertEqual(split_teams("BC Khimki - CSKA-2 Moscow"),
                          ("BC Khimki", "CSKA-2 Moscow"))
