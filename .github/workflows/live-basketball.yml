@@ -40,6 +40,8 @@ jobs:
         run: python -m playwright install chromium
       - name: Test Apps Script matching
         run: node tests/test_apps_script.cjs
+      - name: Test historical duplicate cleanup
+        run: node tests/test_apps_script_dedupe.cjs
       - name: Run parser tests
         run: python -m unittest discover -s tests -v
       - name: Collect and update sheet
