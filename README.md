@@ -2,7 +2,7 @@
 
 Sběr veřejné LIVE basketbalové nabídky ze SynotTipu, Football.com, Fonbetu a 1xBitu. Výsledky se ukládají do existující Google tabulky s jedním řádkem na zápas a indikátory pokrytí jednotlivých zdrojů.
 
-**Stav: SynotTip + Football.com ostrým testem ověřené.** SynotTip používá Playwright (zachytává skutečné POST odpovědi `GetLiveEventsWL` z otevřené stránky). Football.com nejprve zkouší veřejné JSON API a při jeho HTTP 202 nebo jiné neplatné odpovědi přechází na zachycení skutečné API odpovědi v Chromium, případně stejnooriginový fetch. Ostrý test 2026-11-02 zachytil Football.com 20 LIVE basketbalových zápasů; 17 zachytil SynotTip. U Fonbetu a 1xBitu zatím jen zjišťujeme dostupnost a strukturu API, protože parsery nejsou ověřené. Nedostupnost zdroje není důkaz, že zápas nebyl nabízen.
+**Stav: SynotTip + Football.com ostrým testem ověřené.** SynotTip používá Playwright (zachytává skutečné POST odpovědi `GetLiveEventsWL` z otevřené stránky). Football.com nejprve zkouší veřejné JSON API a při jeho HTTP 202 nebo jiné neplatné odpovědi přechází na zachycení skutečné API odpovědi v Chromium, případně stejnooriginový fetch. Ostrý test 2026-11-02 zachytil Football.com 20 LIVE basketbalových zápasů; 17 zachytil SynotTip. Fonbet nyní obsahuje samostatný parser pro veřejný JSON se sportovní hierarchií, filtrací `place=live` a `level=1`, a zachytávání odpovědí přes Chromium. Na GitHub Actions 2. 11. 2026 ale přímé API i stránka v Chromiu vrátily HTTP 403 (stránka `Just a moment...`), takže ostrá dostupnost Fonbetu stále **není ověřena**; nepokoušíme se obcházet ochrany webu. 1xBit zatím jen zjišťuje dostupnost a strukturu API – parser není dokončen. Nedostupnost zdroje není důkaz, že zápas nebyl nabízen.
 
 ## Plánované spouštění
 
