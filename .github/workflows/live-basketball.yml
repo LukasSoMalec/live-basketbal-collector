@@ -3,6 +3,10 @@ on:
   schedule:
     - cron: '0,15,30,45 * * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-basketball.yml'
 permissions:
   contents: read
 concurrency:
@@ -10,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   collect:
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_LIVE_COLLECTOR == 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' || vars.ENABLE_LIVE_COLLECTOR == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
