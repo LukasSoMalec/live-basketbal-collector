@@ -40,8 +40,67 @@ function norm_(text) {
 }
 
 function normTeam_(text) {
-  // Remove only generic team prefixes, not cities or distinguishing words.
-  return norm_(text).replace(/^(bc|kk|sk|bk)\s+/, '').trim();
+  // Keep youth/women/B-team markers. Ignore only generic club abbreviations.
+  return norm_(text).replace(/\bateny\b/g, 'athens')
+    .replace(/\bathina\b/g, 'athens')
+    .replace(/\bzene\b/g, 'women')
+    .split(' ').filter(t => t && !['as','bc','bk','kk','sk','jk','fc','ac'].includes(t))
+    .join(' ');
+}
+
+function sameTeam_(a, b) {
+  const x = normTeam_(a).split(' ').filter(Boolean);
+  const y = normTeam_(b).split(' ').filter(Boolean);
+  if (!x.length || !y.length) return false;
+  if (x.join(' ') === y.join(' ')) return true;
+  const protectedWords = new Set(['women','woman','w','men','u18','u19','u20',
+    'u21','u22','u23','reserves','reserve','academy','junior','juniors','ii','iii','b','2']);
+  const sig = tokens => tokens.filter(w => protectedWords.has(w)).sort().join('|');
+  if (sig(x) !== sig(y)) return false;
+  const [shorter, longer] = x.length < y.length ? [x, y] : [y, x];
+  if (longer.length - shorter.length > 2) return false;
+  if (shorter.some((w, i) => w !== longer[i])) return false;
+  const city = new Set(['athens','moscow','saint','petersburg','chelyabinsk',
+    'kursk','vratsa','doha','nicosia','kedainiai']);
+  return longer.slice(shorter.length).every(w => city.has(w));
+}
+
+function normLeague_(text) {
+  return norm_(text).replace(/\brecko\b/g, 'greece')
+    .replace(/\bfrancie\b/g, 'france')
+    .replace(/\bzene\b/g, 'women');
+}
+
+function sameFixture_(date, home, away, competition, row, incomingId) {
+  if (matchDateKey_(date) !== matchDateKey_(row[1])) return false;
+  const existingId = eventId_(row[12]);
+  if (incomingId && existingId && incomingId !== existingId) return false;
+  if (!sameTeam_(home, row[3]) || !sameTeam_(away, row[4])) return false;
+  const exactTeams = (normTeam_(home) === normTeam_(row[3])
+    && normTeam_(away) === normTeam_(row[4]));
+  const leagueA = normLeague_(competition);
+  const leagueB = normLeague_(row[2]);
+  if (!leagueA || !leagueB) return false;
+  if (leagueA === leagueB) return true;
+  if (!exactTeams) return false;
+  // Never join a men's match to a women's or youth competition by name alone.
+  const qualifier = t => t.match(/\b(women|woman|u18|u19|u20|u21|u22|u23|junior|youth)\b/g)?.sort().join('|') || '';
+  return qualifier(leagueA) === qualifier(leagueB);
+}
+
+function chooseMatch_(rows, date, home, away, competition, incomingId) {
+  const candidates = [];
+  for (let ix = 0; ix < rows.length; ix++) {
+    if (sameFixture_(date, home, away, competition, rows[ix], incomingId))
+      candidates.push(ix);
+  }
+  if (!candidates.length) return -1;
+  // If several old duplicates exist, prefer an identified master row.
+  const ids = new Set(candidates.map(ix => eventId_(rows[ix][12])).filter(Boolean));
+  if (ids.size > 1) return -1;
+  if (incomingId && ids.size && !ids.has(incomingId)) return -1;
+  const withId = candidates.filter(ix => eventId_(rows[ix][12]));
+  return (withId.length ? withId : candidates)[0];
 }
 
 function eventId_(text) {
@@ -106,8 +165,10 @@ function saveSnapshot_(body) {
       const nameKey = exactKey_(m.date, m.home, m.away);
       let ix = srid && idIndex.has(srid) ? idIndex.get(srid) : -1;
       if (ix === -1) {
-        const candidates = nameIndex.get(nameKey) || [];
-        if (candidates.length === 1) ix = candidates[0];
+        // Handles AS Papagou = Papagou, Panionios BC Atény = Panionios Athens,
+        // and old duplicate rows. A conflicting existing SportRadar ID blocks
+        // any automatic merge; same-date and league context are required.
+        ix = chooseMatch_(rows, m.date, m.home, m.away, m.competition, srid);
       }
       if (ix === -1) {
         const key = [m.date, norm_(m.competition), normTeam_(m.home), normTeam_(m.away)].join('|');
