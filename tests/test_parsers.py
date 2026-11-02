@@ -79,6 +79,26 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(parsed[0].score, "55:50")
         self.assertEqual(parsed[0].date, "2026-11-02")
 
+    def test_fonbet_listbase_does_not_treat_future_as_live(self):
+        base = {
+            "sports": [
+                {"id": 1, "name": "Basketball", "alias": "basketball", "kind": "sport"},
+                {"id": 9, "name": "ABA League", "kind": "segment", "parentId": 1},
+            ],
+            "events": [
+                {"id": 11, "sportId": 9, "level": 1, "kind": 1, "place": "line",
+                 "team1": "Upcoming A", "team2": "Upcoming B", "startTime": 1793633400},
+                {"id": 12, "sportId": 9, "level": 1, "kind": 1, "place": "live",
+                 "team1": "Current A", "team2": "Current B", "startTime": 1793633400},
+                {"id": 13, "sportId": 9, "level": 1, "kind": 1, "place": "live",
+                 "parentId": 12, "team1": "Period A", "team2": "Period B",
+                 "startTime": 1793633400},
+            ]
+        }
+        result = parse_fonbet(base)
+        self.assertEqual([match.providerId for match in result], ["12"])
+        self.assertEqual(result[0].competition, "ABA League")
+
     def test_fonbet_rejects_delta_and_invalid_schema(self):
         base = {"sports": [], "events": []}
         self.assertEqual(parse_fonbet(base), [])
