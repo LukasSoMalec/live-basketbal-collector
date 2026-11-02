@@ -2,7 +2,7 @@
 
 Sběr veřejné LIVE basketbalové nabídky ze SynotTipu, Football.com, Fonbetu a 1xBitu. Výsledky se ukládají do existující Google tabulky s jedním řádkem na zápas a indikátory pokrytí jednotlivých zdrojů.
 
-**Stav: SynotTip + Football.com ostrým testem ověřené.** SynotTip používá Playwright (zachytává skutečné POST odpovědi `GetLiveEventsWL` z otevřené stránky). Football.com nejprve zkouší veřejné JSON API a při jeho HTTP 202 nebo jiné neplatné odpovědi přechází na zachycení skutečné API odpovědi v Chromium, případně stejnooriginový fetch. Ostrý test 2026-11-02 zachytil Football.com 20 LIVE basketbalových zápasů; 17 zachytil SynotTip. Fonbet nyní obsahuje samostatný parser pro veřejný JSON se sportovní hierarchií, filtrací `place=live` a `level=1`, a zachytávání odpovědí přes Chromium. Na GitHub Actions 2. 11. 2026 ale přímé API i stránka v Chromiu vrátily HTTP 403 (stránka `Just a moment...`), takže ostrá dostupnost Fonbetu stále **není ověřena**; nepokoušíme se obcházet ochrany webu. 1xBit zatím jen zjišťuje dostupnost a strukturu API – parser není dokončen. Nedostupnost zdroje není důkaz, že zápas nebyl nabízen.
+**Stav: 3 ze 4 zdrojů ostrým testem ověřené (SynotTip, Football.com, Fonbet).** SynotTip zachytává skutečné POST odpovědi přes Playwright. Football.com kombinuje přímé JSON API a záložní zachytávání síťových odpovědí přes Chromium (přímé API často vrací HTTP 202). Fonbet načítá ověřenou veřejnou adresu `https://line-lb51.bk6bba-resources.com/events/listBase?lang=en&scopeMarket=1600`, kterou dodal uživatel ze svého fungujícího Multiscriptu. Z kompletního seznamu bere pouze `place=live`, hlavní události a basketbal. Ověřené spuštění 2026-11-02 v 18:45 zachytilo SynotTip 17, Football.com 19 a Fonbet 16 LIVE zápasů; 13 Fonbet zápasů se bezpečně spojilo na jednoznačné identifikátory Sportradar. Přesto mohou zůstat historické duplicity vzniklé před opravou párování. 1xBit zatím jen ověřuje dostupnost API; parser chybí.
 
 ## Plánované spouštění
 
@@ -26,6 +26,12 @@ Bez přítomnosti obou secrets workflow při ručním spuštění skončí chybo
 ## Co se ukládá
 
 Záznamy získané LIVE a spárované přes `sr:match:<ID>`, nebo pouze jednoznačné názvy týmů a datum. Stav `ANO` má přednost a později se nepřepíše jako `NE`. Pokud je zdroj nedostupný, zapíše se stav kontroly, nikoli falešná absence zápasu. SynotTip long-poll snapshoty nemusí být úplné. Ze samotné absence zápasu se proto automaticky nesmí vyvodit `NE`.
+
+## Párování a Apps Script
+
+Pro nové zápisy se Fonbet páruje podle data a ověřených dvojic týmů s jednoznačným ID Sportradar získaným od SynotTipu nebo Football.com. Zároveň byl opraven soubor `GoogleAppsScript.gs`: původní `getValues()` vracelo pro datumový sloupec objekty `Date`, které se nesrovnávaly s textovým ISO datem. **Změna v souboru GitHubu se do již nasazeného Apps Scriptu nepromítne automaticky.** Chce-li uživatel nasadit tuto obecnou opravu, musí v tabulce přepsat kód v editoru Apps Script aktualizovanou verzí a přes `Nasadit → Spravovat nasazení → Upravit → Nová verze → Nasadit` aktualizovat stávající webovou aplikaci. Tím může zachovat stejnou URL a GitHub Secrets.
+
+Staré duplicitní řádky se automaticky nemažou, aby nebyla ztracena historie či omylem sloučeny různé zápasy. Doporučuje se je nejprve jednotlivě zkontrolovat.
 
 ## Lokální test
 
