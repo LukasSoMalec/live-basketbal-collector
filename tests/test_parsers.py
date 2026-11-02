@@ -1,5 +1,5 @@
 import unittest
-from collector import Match, Source, parse_synot, parse_football, parse_fonbet, split_teams, reconcile_fonbet_references
+from collector import Match, Source, parse_synot, parse_football, parse_fonbet, parse_1xbit, split_teams, reconcile_fonbet_references, reconcile_1xbit_references
 
 
 class ParserTests(unittest.TestCase):
@@ -142,6 +142,67 @@ class ParserTests(unittest.TestCase):
         ])
         self.assertEqual(reconcile_fonbet_references([a, b, fonbet]), 0)
         self.assertEqual(fonbet.matches[0].eventId, "")
+
+    def test_1xbit_current_v3_live_basketball_schema(self):
+        def event(match_id, league, home="Mega", away="Spartak Subotica",
+                  sport_id=3, menu=2, period=2, main_id=None):
+            return {
+                "sport": {"nameEng": "Basketball", "id": sport_id, "name": "Basketbal"},
+                "liga": {"nameEng": league, "name": "Jadranská liga"},
+                "opponent1": {"fullNameEng": home},
+                "opponent2": {"fullNameEng": away},
+                "startTs": 1793640600, "id": match_id,
+                "mainGameId": match_id if main_id is None else main_id,
+                "kind": 1, "menuSection": menu,
+                "scores": {"currentPeriod": period, "currentPeriodName": "2. čtvrtina",
+                           "scoreOpp1": 14, "scoreOpp2": 30},
+            }
+
+        payload = [
+            event(767456285, "ABA League"),
+            event(2, "NBA 2K26. Super Series"),
+            event(3, "IPBL. Pro Division"),
+            event(4, "ABA League", sport_id=1),
+            event(5, "ABA League", menu=1),
+            event(6, "ABA League", period=0),
+            event(7, "ABA League", main_id=99),
+        ]
+        parsed = parse_1xbit(payload)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0].home, "Mega")
+        self.assertEqual(parsed[0].away, "Spartak Subotica")
+        self.assertEqual(parsed[0].competition, "ABA League")
+        self.assertEqual(parsed[0].date, "2026-11-02")
+        self.assertEqual(parsed[0].providerId, "767456285")
+        self.assertEqual(parsed[0].score, "14:30")
+
+    def test_1xbit_invalid_payload_distinct_from_empty(self):
+        self.assertEqual(parse_1xbit([]), [])
+        self.assertIsNone(parse_1xbit({"Value": []}))
+        self.assertIsNone(parse_1xbit([{"unknown": True}]))
+
+    def test_1xbit_unique_id_linkage_and_ambiguous_rejection(self):
+        anchor = Source("Football.com", matches=[
+            Match("KK Mega Basket", "Spartak Subotica", "ABA",
+                  "2026-11-02", "sr:match:74131944"),
+            Match("Team A", "Team B", "ABA", "2026-11-02",
+                  "sr:match:11111111"),
+        ])
+        ambiguous = Source("SynotTip", matches=[
+            Match("Team A", "Team B", "ABA", "2026-11-02",
+                  "sr:match:22222222"),
+        ])
+        bit = Source("1xBit", matches=[
+            Match("Mega", "Spartak Subotica", "ABA", "2026-11-02",
+                  providerId="767456285"),
+            Match("Team A", "Team B", "ABA", "2026-11-02",
+                  providerId="99"),
+            Match("Unseen", "Unknown", "ABA", "2026-11-02",
+                  providerId="100"),
+        ])
+        self.assertEqual(reconcile_1xbit_references([anchor, ambiguous, bit]), 1)
+        self.assertEqual([m.eventId for m in bit.matches],
+                         ["sr:match:74131944", "", ""])
 
     def test_team_split_with_dashes(self):
         self.assertEqual(split_teams("BC Khimki - CSKA-2 Moscow"),
