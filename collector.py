@@ -191,7 +191,7 @@ async def synot(browser) -> Source:
     return s
 
 
-async def football(browser, client: httpx.AsyncClient) -> Source:
+async def football(browser, client: httpx.AsyncClient, wait_ms: int = 8500) -> Source:
     """Use public JSON directly; if it returns an HTML/202 response, read the
     website's own JSON traffic via Chromium (no account or copied cookies).
     """
@@ -241,7 +241,7 @@ async def football(browser, client: httpx.AsyncClient) -> Source:
     page.on("response", on_response)
     try:
         await page.goto(FOOT_PAGE, wait_until="domcontentloaded", timeout=30000)
-        await page.wait_for_timeout(8500)
+        await page.wait_for_timeout(wait_ms)
         if tasks:
             await asyncio.gather(*list(tasks), return_exceptions=True)
 
