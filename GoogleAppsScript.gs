@@ -49,8 +49,17 @@ function eventId_(text) {
   return m ? 'sr:match:' + m[1] : '';
 }
 
+function matchDateKey_(value) {
+  // getValues() returns Date objects for date-formatted Sheets cells, even
+  // when the API originally wrote an ISO string such as '2026-11-02'.
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime())) {
+    return Utilities.formatDate(value, 'Europe/Prague', 'yyyy-MM-dd');
+  }
+  return String(value || '').trim().slice(0, 10);
+}
+
 function exactKey_(date, home, away) {
-  return `${date}|${normTeam_(home)}|${normTeam_(away)}`;
+  return `${matchDateKey_(date)}|${normTeam_(home)}|${normTeam_(away)}`;
 }
 
 function saveSnapshot_(body) {
