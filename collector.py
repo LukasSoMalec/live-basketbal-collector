@@ -19,7 +19,7 @@ SYN_URL = "https://sport.synottip.cz/live"
 FOOT_API = "https://www.football.com/api/ng/factsCenter/configurableLiveOrPrematchEvents?sportId=sr%3Asport%3A2"
 FOOT_PAGE = "https://www.football.com/ng/m/sport/basketball/live_list"
 FON_URL = "https://fonbet.com.cy/live/basketball"
-FON_API = "https://line02.cy8cff-resources.com/events/list?lang=en&version=87839860670&scopeMarket=1700"
+FON_API = "https://line02.cy8cff-resources.com/events/list?lang=en&version=0&scopeMarket=1700"
 BIT_URL = "https://1xbit-8976.pro/cs/live/basketball"
 BIT_API = ("https://1xbit-8976.pro/service-api/main-live-feed/v3/games1x2"
            "?cfView=3&count=40&fcountry=204&gr=933&grMode=4&lng=cs&ref=65&selectedMs=1.3,2.3,10.3")
@@ -141,6 +141,83 @@ def parse_football(payload: Any) -> list[Match] | None:
                                  event_id if event_id.startswith("sr:match:") else "",
                                  str(e.get("gameId") or ""), state, str(e.get("setScore") or "")))
     return dedup(matches)
+
+
+
+def parse_fonbet(payload: Any) -> list[Match] | None:
+    """Parse a complete Fonbet event listing, not a versioned delta packet.
+
+    The event sportId usually refers to a league, whose parent points up
+    through the sport tree. Strictly require place=live and root level=1.
+    None means unknown/incomplete schema; [] means valid with no matches.
+    """
+    if not isinstance(payload, dict):
+        return None
+    data = payload.get("data", payload)
+    if not isinstance(data, dict):
+        return None
+    sports, events = data.get("sports"), data.get("events")
+    if not isinstance(sports, list) or not isinstance(events, list):
+        return None
+
+    # A delta packet cannot be interpreted as a full list; do not treat its
+    # missing matches as absent.
+    if str(data.get("fromVersion", "0")) not in ("0", ""):
+        return None
+
+    by_id = {str(s.get("id")): s for s in sports if isinstance(s, dict)}
+    def basketball_league(sport_id):
+        current, visited = str(sport_id), set()
+        league = ""
+        for _ in range(12):
+            if current in visited or current not in by_id:
+                break
+            visited.add(current)
+            item = by_id[current]
+            alias = str(item.get("alias") or "").lower()
+            kind = str(item.get("kind") or "").lower()
+            name = str(item.get("name") or "")
+            if alias in ("basketball", "basket"):
+                return league or "Basketball"
+            if kind == "sport":
+                return (league or "Basketball") if name.lower() == "basketball" else ""
+            if not league:
+                league = name
+            current = str(item.get("parentId") or "")
+        return ""
+
+    scores = {}
+    for item in data.get("eventMiscs") or []:
+        if isinstance(item, dict) and "eventId" in item:
+            a, b = item.get("score1"), item.get("score2")
+            if a is not None and b is not None:
+                scores[str(item["eventId"])] = f"{a}:{b}"
+    found = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if str(event.get("place", "")).lower() != "live":
+            continue
+        if str(event.get("level", "1")) != "1":
+            continue
+        if event.get("kind") is not None and str(event["kind"]) != "1":
+            continue
+        home = str(event.get("team1") or "").strip()
+        away = str(event.get("team2") or "").strip()
+        if not home or not away:
+            continue
+        competition = basketball_league(event.get("sportId"))
+        if not competition or is_simulated(competition, home, away):
+            continue
+        if re.search(r"(?i)(ipbl|esportsbattle|nba\s*2k|h2h|gg league|cyber|virtual)", " ".join((competition, home, away))):
+            continue
+        date = local_date(event.get("startTime"))
+        if not date:
+            continue
+        eid = str(event.get("id") or "")
+        found.append(Match(home, away, competition, date, "",
+                           eid, "live", scores.get(eid, "")))
+    return dedup(found)
 
 
 async def synot(browser) -> Source:
@@ -285,6 +362,88 @@ async def football(browser, client: httpx.AsyncClient, wait_ms: int = 8500) -> S
     s.complete = False
     return s
 
+async def fonbet(browser, client: httpx.AsyncClient, wait_ms: int = 7000) -> Source:
+    """Read a complete public Fonbet feed; fall back to site's own API calls.
+
+    No anti-bot solving, login, copied cookies, or guesswork about access.
+    The URL's version=0 asks for a full snapshot, unlike a stale delta cursor.
+    """
+    src = Source("Fonbet")
+    notes = []
+    try:
+        response = await client.get(FON_API, timeout=15)
+        if response.status_code == 200:
+            try:
+                parsed = parse_fonbet(response.json())
+                if parsed:
+                    src.matches, src.status = parsed, "ÚSPĚCH"
+                    return src
+                notes.append("Direct feed: incomplete/empty event listing")
+            except ValueError:
+                notes.append("Direct feed: not JSON")
+        else:
+            notes.append("Direct feed HTTP " + str(response.status_code))
+    except Exception as exc:
+        notes.append("Direct feed: " + type(exc).__name__)
+
+    ctx = await browser.new_context(locale="en-US", timezone_id="Europe/Prague")
+    page = await ctx.new_page()
+    snapshots = []
+    pending = set()
+    statuses = set()
+
+    async def observe(response):
+        try:
+            if response.status != 200:
+                statuses.add("Feed HTTP " + str(response.status))
+                return
+            parsed = parse_fonbet(await response.json())
+            if parsed is None:
+                statuses.add("Feed JSON incomplete/delta")
+            else:
+                snapshots.append(parsed)
+        except Exception as exc:
+            statuses.add("Feed parse " + type(exc).__name__)
+
+    def on_response(response):
+        if "/events/list" not in response.url:
+            return
+        t = asyncio.create_task(observe(response))
+        pending.add(t)
+        t.add_done_callback(pending.discard)
+
+    page.on("response", on_response)
+    try:
+        nav = await page.goto(FON_URL, wait_until="domcontentloaded", timeout=30000)
+        notes.append("Page HTTP " + str(nav.status if nav else "none"))
+        await page.wait_for_timeout(wait_ms)
+        if pending:
+            await asyncio.gather(*list(pending), return_exceptions=True)
+        valid = [m for batch in snapshots for m in batch]
+        if valid:
+            src.matches = dedup(valid)
+            src.status = "ÚSPĚCH"
+        elif snapshots:
+            src.status = "ČÁSTEČNĚ"
+            notes.append("Feed contained no confirmable live basketball matches")
+        else:
+            try:
+                title = (await page.title())[:70]
+                if title:
+                    notes.append("Page title: " + title)
+            except Exception:
+                pass
+            notes.append("No complete browser feed")
+    except Exception as exc:
+        notes.append("Browser: " + type(exc).__name__)
+    finally:
+        await ctx.close()
+    notes.extend(sorted(statuses))
+    src.error = "; ".join(dict.fromkeys(notes))[:450]
+    src.complete = False
+    return src
+
+
 async def inspect_source(browser, client, name, page_url, api_url, needle):
     """Probe other feeds without treating unverified structure as match coverage."""
     s = Source(name)
@@ -347,7 +506,7 @@ async def collect():
                          "Accept": "application/json, text/plain, */*"}) as client:
                 sources = await asyncio.gather(
                     synot(browser), football(browser, client),
-                    inspect_source(browser, client, "Fonbet", FON_URL, FON_API, "/events/list"),
+                    fonbet(browser, client),
                     inspect_source(browser, client, "1xBit", BIT_URL, BIT_API, "/games1x2"))
         finally:
             await browser.close()
