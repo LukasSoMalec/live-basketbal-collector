@@ -1,5 +1,5 @@
 import unittest
-from collector import Match, Source, parse_synot, parse_football, parse_fonbet, parse_1xbit, split_teams, reconcile_fonbet_references, reconcile_1xbit_references
+from collector import Match, Source, parse_synot, parse_football, parse_fonbet, parse_1xbit, split_teams, reconcile_fonbet_references, reconcile_1xbit_references, team_equivalent, reconcile_semantic_references
 
 
 class ParserTests(unittest.TestCase):
@@ -220,6 +220,44 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(reconcile_1xbit_references([official, bit]), 2)
         self.assertEqual([m.eventId for m in bit.matches],
                          ["sr:match:74978916", "sr:match:73869150"])
+
+    def test_semantic_aliases_papagou_panionios(self):
+        self.assertTrue(team_equivalent("AS Papagou", "Papagou"))
+        self.assertTrue(team_equivalent("Panionios BC Atény", "Panionios Athens"))
+        self.assertTrue(team_equivalent("Panionios Athens", "Panionios"))
+        self.assertFalse(team_equivalent("Papagou U19", "Papagou"))
+        self.assertFalse(team_equivalent("Panionios Women", "Panionios"))
+        self.assertFalse(team_equivalent("Panionios B", "Panionios"))
+        self.assertFalse(team_equivalent("Panionios Academy", "Panionios"))
+
+        anchor = Source("SynotTip", matches=[
+            Match("AS Papagou", "Panionios BC Atény",
+                  "Řecko / Elite League", "2026-11-02", "sr:match:73113286")])
+        fon = Source("Fonbet", matches=[
+            Match("AS Papagou", "Panionios Athens",
+                  "Greece. Elite League", "2026-11-02", providerId="123")])
+        bit = Source("1xBit", matches=[
+            Match("Papagou", "Panionios",
+                  "Greece. Elite League", "2026-11-02", providerId="456")])
+        self.assertEqual(reconcile_semantic_references([anchor, fon, bit]), 2)
+        self.assertEqual(fon.matches[0].eventId, "sr:match:73113286")
+        self.assertEqual(bit.matches[0].eventId, "sr:match:73113286")
+
+    def test_semantic_aliases_avoid_wrong_competition_and_multiple_ids(self):
+        a = Source("SynotTip", matches=[
+            Match("AS Papagou", "Panionios Athens",
+                  "Greece. Elite League", "2026-11-02", "sr:match:73113286"),
+            Match("AS Papagou", "Panionios Athens",
+                  "Greece. Elite League", "2026-11-02", "sr:match:99999991"),
+        ])
+        fon = Source("Fonbet", matches=[
+            Match("Papagou", "Panionios",
+                  "Greece. Elite League", "2026-11-02", providerId="123"),
+            Match("Papagou", "Panionios",
+                  "Italy. Serie A", "2026-11-02", providerId="124"),
+        ])
+        self.assertEqual(reconcile_semantic_references([a, fon]), 0)
+        self.assertTrue(all(not m.eventId for m in fon.matches))
 
     def test_team_split_with_dashes(self):
         self.assertEqual(split_teams("BC Khimki - CSKA-2 Moscow"),
