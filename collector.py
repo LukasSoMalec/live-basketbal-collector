@@ -619,6 +619,10 @@ _FONBET_PAIR_ALIASES_RAW = [
     (("Apollon Limassol", "APOEL"), ("BC Apollon Limassol", "Apoel Nicosia")),
     (("Murray State (stud)", "Tennesee State (stud)"),
      ("Murray State Racers", "Tennessee State Tigers")),
+    (("Stjarnan (w)", "Fjölnir (w)"),
+     ("Stjarnan FC", "Fjolnir Reykjavik")),
+    (("Bnei Yehuda Beava (w)", "Maccabi Haifa (w)"),
+     ("Bnei Yehuda (Women)", "Maccabi Haifa (Women)")),
 ]
 _FONBET_PAIR_ALIASES = {
     _pair_key(*fonbet_names): _pair_key(*reference_names)
@@ -687,6 +691,10 @@ _1XBIT_PAIR_ALIASES_RAW = [
      ("Borac Banja Luka", "Kk Orlovik Zepce")),
     (("Columbia Lions (Women)", "Davidson Wildcats (Women)"),
      ("Columbia Lions", "Davidson Wildcats")),
+    (("UMF Stjarnan (Women)", "Fjolnir (Women)"),
+     ("Stjarnan FC", "Fjolnir Reykjavik")),
+    (("FEA Neas Filadelfeias Neas Chalkidonas", "Enosi Iliou"),
+     ("Fea Nf Nx", "Enosi Iliou")),
 ]
 _1XBIT_PAIR_ALIASES = {
     _pair_key(*bit_names): _pair_key(*reference_names)
