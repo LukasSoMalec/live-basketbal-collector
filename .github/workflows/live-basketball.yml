@@ -16,6 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check destination configuration
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           if [[ -z "$SHEETS_WEBAPP_URL" || -z "$SHEETS_INGEST_KEY" ]]; then
@@ -43,6 +44,7 @@ jobs:
       - name: Run parser tests
         run: python -m unittest discover -s tests -v
       - name: Collect and update sheet
+        if: github.event_name == 'workflow_dispatch'
         run: python collector.py
       - name: Save last snapshot
         if: always()
