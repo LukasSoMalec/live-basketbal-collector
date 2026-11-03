@@ -99,6 +99,7 @@ function manualMergeRows() {
   if (!lock.tryLock(20000)) {
     return ui.alert('Právě probíhá jiný zápis. Zkus sloučení znovu.');
   }
+  let report = '';
   try {
     const current = read();
     if (current.some((r, i) =>
@@ -144,10 +145,11 @@ function manualMergeRows() {
     // Měníme jen F:M, původní název, datum a klíč prvního řádku zůstávají.
     sheet.getRange(numbers[0], 6, 1, 8).setValues([merged.slice(5, 13)]);
     numbers.slice(1).sort((a, b) => b - a).forEach(n => sheet.deleteRow(n));
-    ui.alert('Hotovo! Sloučeno ' + numbers.length + ' řádků do jednoho. Archiv je zachován.');
+    report = 'Hotovo! Sloučeno ' + numbers.length + ' řádků do jednoho. Archiv je zachován.';
   } catch (error) {
-    ui.alert('Sloučení nebylo dokončeno: ' + error.message);
+    report = 'Sloučení nebylo dokončeno: ' + error.message;
   } finally {
     lock.releaseLock();
   }
+  ui.alert(report);
 }
