@@ -66,10 +66,11 @@ class ParserTests(unittest.TestCase):
             "Premier League", "Premier League A", "Premier League B",
             "World, Premier League", "International / Premier League A",
             "IPBL. Pro Division", "IPBL. Prime Division. Women",
-            "Table Basketball League", "BSKT Cup", "Ukraine, BSKT Cup"
+            "Table Basketball League", "BSKT Cup", "Ukraine, BSKT Cup",
+            "China. CDBL", "China CDBL", "China / CDBL", "CDBL"
         ]
         allowed = [
-            "NCAA", "WNBL", "NBA", "China. CDBL",
+            "NCAA", "WNBL", "NBA", "China. CBA", "China. WCBA",
             "Philippines. NCAA", "Kansai Championship. University League. Women",
             "Israel. Premier League", "Australia. Premier League",
             "British Basketball League", "Premier Basketball League"
