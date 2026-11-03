@@ -21,12 +21,12 @@ REJECT = re.compile(r"not started|pre.?match|scheduled|finished|final|^ns$", re.
 seen = 0
 
 
-def audit_parser(payload):
+def audit_parser(payload, rejected=None):
     global seen
     seen += 1
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
         print("AUDIT invalid JSON schema", flush=True)
-        return co._audit_original(payload)
+        return co._audit_original(payload, rejected)
 
     reasons = Counter()
     groups = Counter()
@@ -73,7 +73,7 @@ def audit_parser(payload):
     print("AUDIT LIVE candidates (max 85):", flush=True)
     for d in descriptions[:85]:
         print("AUDIT EVENT", repr(d), flush=True)
-    result = co._audit_original(payload)
+    result = co._audit_original(payload, rejected)
     print("AUDIT PARSED count=", None if result is None else len(result), flush=True)
     return result
 
