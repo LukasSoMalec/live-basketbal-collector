@@ -1,6 +1,10 @@
 name: LIVE basketbal - 4 sazkovky
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-basketball.yml'
 permissions:
   contents: read
 concurrency:
