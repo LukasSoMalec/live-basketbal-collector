@@ -135,7 +135,19 @@ def parse_football(payload: Any) -> list[Match] | None:
             if not state or re.search(r"not started|pre.?match|scheduled|finished|final|^ns$", state, re.I):
                 continue
             home, away = e.get("homeTeamName") or "", e.get("awayTeamName") or ""
-            if not home or not away or is_simulated(league, home, away):
+            if not home or not away:
+                continue
+            bskt_cup = bool(re.search(r"\bbskt\s+cup\b", league, re.I))
+            # BSKT CUP is real fast 5x5 basketball, NOT a virtual/esports feed.
+            # It is enabled only after deploying the updated Apps Script
+            # because the old sheet writer merges repeated same-day opponents.
+            if bskt_cup:
+                if os.environ.get("ENABLE_BSKT_CUP") != "1":
+                    continue
+                if not re.fullmatch(r"sr:match:[A-Za-z0-9|_-]{6,120}",
+                                    str(e.get("eventId") or "")):
+                    continue
+            elif is_simulated(league, home, away):
                 continue
             event_id = str(e.get("eventId") or "")
             matches.append(Match(home, away, league, local_date(e.get("estimateStartTime")),
