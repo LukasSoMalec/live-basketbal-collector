@@ -703,33 +703,32 @@ function sameLearnedAliasFixture_(aliases, source, date, home, away,
   if (cls !== fixtureClass_(row[2], row[3], row[4])) return false;
   const left = canonicalTeamAlias_(aliases, source, competition, home, cls);
   const right = canonicalTeamAlias_(aliases, source, competition, away, cls);
-  if (!left && !right) return false;
-  const group = (left || right).scope;
-  if ((left && left.scope !== group) || (right && right.scope !== group))
-    return false;
   const rowLeague = normLeague_(row[2]);
-  const rowGroup = aliases.leagueGroups.has(rowLeague)
+  const rawGroup = aliases.leagueGroups.has(rowLeague)
     ? aliases.leagueGroups.get(rowLeague) : rowLeague;
-  if (!rowGroup || rowGroup !== group) return false;
+  if (!rawGroup || (left && left.scope !== rawGroup) ||
+      (right && right.scope !== rawGroup)) return false;
 
-  function identity(team) {
-    // The display-name on the stored row is often the manual merge master
-    // (canonical name). If not, use ONLY unambiguous aliases from sources.
+  function storedIdentity(team) {
+    // The existing fixture may have arrived from the aliased bookmaker
+    // FIRST, so matching must work in both arrival orders.
     const original = normTeam_(team);
-    const matches = new Set([original]);
     const mapped = new Set();
     for (const bookmaker of SOURCES) {
       const found = canonicalTeamAlias_(aliases, bookmaker, row[2], team, cls);
-      if (found && found.scope === group) mapped.add(found.canonical);
+      if (found && found.scope === rawGroup) mapped.add(found.canonical);
     }
-    return mapped.size === 1 ? [...mapped][0] :
-      mapped.size > 1 ? '' : original;
+    if (mapped.size > 1) return {name:'', mapped:true};
+    return {name:mapped.size ? [...mapped][0] : original,
+      mapped:mapped.size > 0};
   }
+  const bh = storedIdentity(row[3]), ba = storedIdentity(row[4]);
+  if (!left && !right && !bh.mapped && !ba.mapped) return false;
   const ah = left ? left.canonical : normTeam_(home);
   const aa = right ? right.canonical : normTeam_(away);
-  const bh = identity(row[3]), ba = identity(row[4]);
-  if (!ah || !aa || !bh || !ba) return false;
-  return (ah === bh && aa === ba) || (ah === ba && aa === bh);
+  if (!ah || !aa || !bh.name || !ba.name) return false;
+  return (ah === bh.name && aa === ba.name) ||
+    (ah === ba.name && aa === bh.name);
 }
 
 function saveSnapshot_(body) {
