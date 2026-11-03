@@ -1,4 +1,6 @@
 import unittest
+import os
+from unittest import mock
 from collector import Match, Source, parse_synot, parse_football, parse_fonbet, parse_1xbit, split_teams, reconcile_fonbet_references, reconcile_1xbit_references, team_equivalent, reconcile_semantic_references
 
 
@@ -40,6 +42,28 @@ class ParserTests(unittest.TestCase):
         matches = parse_football(payload)
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0].eventId, "sr:match:74131950")
+
+    def test_real_bskt_cup_with_opaque_ids_is_gated_until_apps_script_update(self):
+        events = [
+            {"eventId": "sr:match:BAaGde|NHdp-rkVS9wMWaBw", "gameId": "33827",
+             "status": 1, "matchStatus": "Q2", "sport": {"id": "sr:sport:2"},
+             "homeTeamName": "Alligators", "awayTeamName": "Lions",
+             "estimateStartTime": 1793691000000, "setScore": "32:32"},
+            {"eventId": "sr:match:BAaGde|differentMatchAbc", "gameId": "33841",
+             "status": 1, "matchStatus": "Q1", "sport": {"id": "sr:sport:2"},
+             "homeTeamName": "Alligators", "awayTeamName": "Lions",
+             "estimateStartTime": 1793691000000, "setScore": "10:8"},
+        ]
+        payload = {"data": [{"name": "BSKT CUP", "events": events}]}
+        with mock.patch.dict(os.environ, {"ENABLE_BSKT_CUP": "0"}):
+            self.assertEqual(parse_football(payload), [])
+        with mock.patch.dict(os.environ, {"ENABLE_BSKT_CUP": "1"}):
+            parsed = parse_football(payload)
+        self.assertEqual(len(parsed), 2)
+        self.assertEqual([x.eventId for x in parsed],
+                         [x["eventId"] for x in events])
+        self.assertEqual(parsed[0].home, "Alligators")
+        self.assertEqual(parsed[0].date, "2026-11-03")
 
     def test_invalid_synot_is_distinct_from_empty(self):
         self.assertIsNone(parse_synot({"Result": 0}))
