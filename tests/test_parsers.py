@@ -1,7 +1,7 @@
 import unittest
 import os
 from unittest import mock
-from collector import Match, Source, parse_synot, parse_football, parse_fonbet, parse_1xbit, split_teams, reconcile_fonbet_references, reconcile_1xbit_references, team_equivalent, reconcile_semantic_references
+from collector import Match, Source, parse_synot, parse_football, parse_fonbet, parse_1xbit, is_unwanted_competition, split_teams, reconcile_fonbet_references, reconcile_1xbit_references, team_equivalent, reconcile_semantic_references
 
 
 class ParserTests(unittest.TestCase):
@@ -43,7 +43,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0].eventId, "sr:match:74131950")
 
-    def test_real_bskt_cup_with_opaque_ids_is_gated_until_apps_script_update(self):
+    def test_bskt_cup_is_excluded_even_when_legacy_flag_enabled(self):
         events = [
             {"eventId": "sr:match:BAaGde|NHdp-rkVS9wMWaBw", "gameId": "33827",
              "status": 1, "matchStatus": "Q2", "sport": {"id": "sr:sport:2"},
@@ -58,12 +58,87 @@ class ParserTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"ENABLE_BSKT_CUP": "0"}):
             self.assertEqual(parse_football(payload), [])
         with mock.patch.dict(os.environ, {"ENABLE_BSKT_CUP": "1"}):
-            parsed = parse_football(payload)
-        self.assertEqual(len(parsed), 2)
-        self.assertEqual([x.eventId for x in parsed],
-                         [x["eventId"] for x in events])
-        self.assertEqual(parsed[0].home, "Alligators")
-        self.assertEqual(parsed[0].date, "2026-11-03")
+            self.assertEqual(parse_football(payload), [])
+
+    def test_conservative_league_blacklist_and_allowlist(self):
+        blocked = [
+            "FrostBall", "World, FrostBall", "Frost Ball",
+            "Premier League", "Premier League A", "Premier League B",
+            "World, Premier League", "International / Premier League A",
+            "IPBL. Pro Division", "IPBL. Prime Division. Women",
+            "Table Basketball League", "BSKT Cup", "Ukraine, BSKT Cup"
+        ]
+        allowed = [
+            "NCAA", "WNBL", "NBA", "China. CDBL",
+            "Philippines. NCAA", "Kansai Championship. University League. Women",
+            "Israel. Premier League", "Australia. Premier League",
+            "British Basketball League", "Premier Basketball League"
+        ]
+        for league in blocked:
+            with self.subTest(blocked=league):
+                self.assertTrue(is_unwanted_competition(league))
+        for league in allowed:
+            with self.subTest(allowed=league):
+                self.assertFalse(is_unwanted_competition(league))
+
+    def test_new_filter_applies_to_all_four_sources(self):
+        synot = {"Result": 1, "ReturnValue": [
+            {"Name": "Basketbal", "DisciplineID": 21, "Events": [
+                {"Name": "Atlant - Kings", "CategoryPath": "Premier League",
+                 "Date": "2026-11-03T08:00:00+01:00"},
+                {"Name": "Townsville Fire - Perth Lynx",
+                 "CategoryPath": "Australia. WNBL",
+                 "Date": "2026-11-03T08:00:00+01:00"}]}]}
+        self.assertEqual(len(parse_synot(synot)), 1)
+        self.assertEqual(parse_synot(synot)[0].competition, "Australia. WNBL")
+
+        def football_group(league, home):
+            return {"name": league, "events": [{
+                "eventId": "sr:match:" + str(100000 + len(home)),
+                "status": 1, "matchStatus": "Q2",
+                "sport": {"id": "sr:sport:2"}, "homeTeamName": home,
+                "awayTeamName": "Opposing Team",
+                "estimateStartTime": 1793691000000}]}
+        football = {"data": [
+            football_group("FrostBall", "Lynx FB"),
+            football_group("Premier League A", "Spiders"),
+            football_group("NCAA", "Rebels")]}
+        self.assertEqual(len(parse_football(football)), 1)
+        self.assertEqual(parse_football(football)[0].competition, "NCAA")
+
+        fonbet = {"sports": [
+            {"id": 1, "kind": "sport", "alias": "basketball", "name": "Basketball"},
+            {"id": 11, "parentId": 1, "name": "FrostBall"},
+            {"id": 12, "parentId": 1, "name": "Premier League A"},
+            {"id": 13, "parentId": 1, "name": "WNBL"},
+        ], "events": [
+            {"id": i, "sportId": sport_id, "level": 1, "kind": 1,
+             "place": "live", "team1": "Home" + str(i),
+             "team2": "Away" + str(i), "startTime": 1793691000}
+            for i, sport_id in [(101, 11), (102, 12), (103, 13)]
+        ]}
+        self.assertEqual(len(parse_fonbet(fonbet)), 1)
+        self.assertEqual(parse_fonbet(fonbet)[0].competition, "WNBL")
+
+        def bit_event(id_, league):
+            return {
+                "id": id_, "mainGameId": id_,
+                "kind": 1, "menuSection": 2,
+                "sport": {"id": 3, "nameEng": "Basketball"},
+                "liga": {"nameEng": league},
+                "opponent1": {"fullNameEng": "Home" + str(id_)},
+                "opponent2": {"fullNameEng": "Away" + str(id_)},
+                "startTs": 1793691000,
+                "scores": {"currentPeriod": 2, "currentPeriodName": "Q2",
+                           "scoreOpp1": 22, "scoreOpp2": 18},
+            }
+        bit = [
+            bit_event(101, "FrostBall"),
+            bit_event(102, "Premier League"),
+            bit_event(103, "WNBL")
+        ]
+        self.assertEqual(len(parse_1xbit(bit)), 1)
+        self.assertEqual(parse_1xbit(bit)[0].competition, "WNBL")
 
     def test_invalid_synot_is_distinct_from_empty(self):
         self.assertIsNone(parse_synot({"Result": 0}))
