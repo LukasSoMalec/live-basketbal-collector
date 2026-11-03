@@ -90,6 +90,9 @@ def is_unwanted_competition(competition: str) -> bool:
     remains allowed, as do NCAA and real domestic/regional competitions.
     """
     name = re.sub(r"\s+", " ", str(competition or "").strip()).casefold()
+    # Exclude the exact CDBL acronym, not other Chinese basketball leagues.
+    if re.search(r"\bcdbl\b", name):
+        return True
     if re.search(r"\b(?:frost[\s-]*ball|ipbl|table[\s-]*basketball[\s-]*league|bskt[\s-]*cup)\b", name):
         return True
     generic = re.sub(r"^(?:world|global|international|mezin[aá]rodn[ií])\s*[,/.-]\s*", "", name)
