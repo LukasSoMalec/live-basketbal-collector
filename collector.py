@@ -279,13 +279,20 @@ def parse_1xbit(payload: Any) -> list[Match] | None:
             continue
         if re.search(r"(?i)(?:\bipbl\b|nba\s*2k\d*|\b2k2\d\b|"
                      r"esportsbattle|cyber|virtual|gg league|"
+                     r"table\s+basketball\s+league|\(tbl\)|"
                      r"\be-?basket(?:ball)?\b)",
                      " ".join((competition, home, away))):
             continue
         state = str(scores.get("currentPeriodName") or
                     scores.get("statusLineStr") or "")
+        status_line = str(scores.get("statusLineStr") or "")
+        # The feed occasionally includes pre-game markets in the LIVE menu
+        # with currentPeriod=1. Inspect BOTH text fields, not only the first.
         if re.search(r"(?i)(not started|not begun|finished|final|"
-                     r"match ended|nezač|skončil|ukončen)", state):
+                     r"match ended|nezač|skončil|ukončen|"
+                     r"do začátku zbývá|začíná za|starts? in|starting in|"
+                     r"before start|until start|countdown)",
+                     state + " " + status_line):
             continue
         date = local_date(event.get("startTs"))
         if not date:
