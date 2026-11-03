@@ -46,9 +46,14 @@ class Source:
     complete: bool = False
     matches: list[Match] = field(default_factory=list)
     error: str = ""
+    rejected: list[dict] = field(default_factory=list)
 
     def as_dict(self) -> dict:
-        return asdict(self)
+        result = asdict(self)
+        result.pop("rejected", None)
+        result["rejectedCompetitions"] = summarize_exclusions(self.rejected) if (
+            self.status in ("ÚSPĚCH", "ČÁSTEČNĚ")) else []
+        return result
 
 
 def local_date(value: Any) -> str:
@@ -91,6 +96,48 @@ def is_unwanted_competition(competition: str) -> bool:
     return re.fullmatch(r"premier[\s-]+league(?:\s+[a-z])?", generic) is not None
 
 
+def record_exclusion(excluded: list[dict] | None, competition: str,
+                     reason: str, event_id: Any = "",
+                     home: str = "", away: str = "") -> None:
+    """Record excluded LIVE fixture only for aggregated audit."""
+    if excluded is None:
+        return
+    league = str(competition or "").strip()[:160] or "(bez názvu)"
+    excluded.append({
+        "competition": league, "reason": reason,
+        "eventId": str(event_id or "")[:120],
+        "home": str(home or "")[:90], "away": str(away or "")[:90],
+    })
+
+
+def summarize_exclusions(exclusions: list[dict]) -> list[dict]:
+    """Count unique rejected fixtures per source per run, not per browser response."""
+    grouped: dict[tuple[str, str], dict] = {}
+    for item in exclusions:
+        name = str(item.get("competition") or "").strip()
+        reason = str(item.get("reason") or "").strip()
+        if not name or not reason:
+            continue
+        key = (name.casefold(), reason)
+        if key not in grouped:
+            grouped[key] = {"competition": name, "reason": reason, "fixtures": set()}
+        fixture = (item.get("eventId") or
+                   (str(item.get("home") or "").casefold() + "|" +
+                    str(item.get("away") or "").casefold()))
+        grouped[key]["fixtures"].add(fixture)
+    return [{"competition": value["competition"], "reason": value["reason"],
+             "count": len(value["fixtures"])}
+            for _, value in sorted(grouped.items())][:250]
+
+
+def exclusion_reason(competition: str, home: str = "", away: str = "") -> str:
+    if is_unwanted_competition(competition):
+        return "Nežádoucí soutěž"
+    if is_simulated(competition, home, away):
+        return "Virtuální / e-sport"
+    return ""
+
+
 def dedup(matches: list[Match]) -> list[Match]:
     found, seen = [], set()
     for m in matches:
@@ -101,7 +148,7 @@ def dedup(matches: list[Match]) -> list[Match]:
     return found
 
 
-def parse_synot(payload: Any) -> list[Match] | None:
+def parse_synot(payload: Any, excluded: list[dict] | None = None) -> list[Match] | None:
     """Return None on invalid response, [] on valid but empty basket response."""
     if not isinstance(payload, dict) or payload.get("Result") != 1:
         return None
@@ -119,8 +166,12 @@ def parse_synot(payload: Any) -> list[Match] | None:
                 e.get("SportExtId") and e.get("SportExtId") != "sr:sport:2"):
             continue
         home, away = split_teams(e.get("Name"))
-        if (not home or not away or is_unwanted_competition(e.get("CategoryPath"))
-                or is_simulated(e.get("CategoryPath"), home, away)):
+        if not home or not away:
+            continue
+        reason = exclusion_reason(e.get("CategoryPath") or "", home, away)
+        if reason:
+            record_exclusion(excluded, e.get("CategoryPath") or "", reason,
+                             e.get("ExternalID") or e.get("ID"), home, away)
             continue
         external = str(e.get("ExternalID") or "")
         scores = e.get("Results") or []
@@ -133,7 +184,7 @@ def parse_synot(payload: Any) -> list[Match] | None:
     return dedup(result)
 
 
-def parse_football(payload: Any) -> list[Match] | None:
+def parse_football(payload: Any, excluded: list[dict] | None = None) -> list[Match] | None:
     if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
         return None
     matches = []
@@ -153,7 +204,10 @@ def parse_football(payload: Any) -> list[Match] | None:
             home, away = e.get("homeTeamName") or "", e.get("awayTeamName") or ""
             if not home or not away:
                 continue
-            if is_unwanted_competition(league) or is_simulated(league, home, away):
+            reason = exclusion_reason(league, home, away)
+            if reason:
+                record_exclusion(excluded, league, reason,
+                                 e.get("eventId") or e.get("gameId"), home, away)
                 continue
             event_id = str(e.get("eventId") or "")
             matches.append(Match(home, away, league, local_date(e.get("estimateStartTime")),
@@ -163,7 +217,7 @@ def parse_football(payload: Any) -> list[Match] | None:
 
 
 
-def parse_fonbet(payload: Any) -> list[Match] | None:
+def parse_fonbet(payload: Any, excluded: list[dict] | None = None) -> list[Match] | None:
     """Parse a complete Fonbet event listing, not a versioned delta packet.
 
     The event sportId usually refers to a league, whose parent points up
@@ -226,10 +280,15 @@ def parse_fonbet(payload: Any) -> list[Match] | None:
         if not home or not away:
             continue
         competition = basketball_league(event.get("sportId"))
-        if (not competition or is_unwanted_competition(competition)
-                or is_simulated(competition, home, away)):
+        if not competition:
             continue
-        if re.search(r"(?i)(ipbl|esportsbattle|nba\s*2k|h2h|gg league|cyber|virtual)", " ".join((competition, home, away))):
+        reason = exclusion_reason(competition, home, away)
+        if not reason and re.search(
+                r"(?i)(ipbl|esportsbattle|nba\s*2k|h2h|gg league|cyber|virtual)",
+                " ".join((competition, home, away))):
+            reason = "Virtuální / e-sport"
+        if reason:
+            record_exclusion(excluded, competition, reason, event.get("id"), home, away)
             continue
         date = local_date(event.get("startTime"))
         if not date:
@@ -241,7 +300,7 @@ def parse_fonbet(payload: Any) -> list[Match] | None:
 
 
 
-def parse_1xbit(payload: Any) -> list[Match] | None:
+def parse_1xbit(payload: Any, excluded: list[dict] | None = None) -> list[Match] | None:
     """Parse verified 1xBit v3 main-live-feed list (not the legacy 1xBet API).
 
     sport.id=3 is basketball; menuSection=2 and a nonzero current period
@@ -294,14 +353,13 @@ def parse_1xbit(payload: Any) -> list[Match] | None:
         competition = name(league)
         if not home or not away or not competition:
             continue
-        if is_unwanted_competition(competition) or is_simulated(competition, home, away):
-            continue
-        if re.search(r"(?i)(?:\bipbl\b|nba\s*2k\d*|\b2k2\d\b|"
+        reason = exclusion_reason(competition, home, away)
+        if not reason and re.search(r"(?i)(?:\bipbl\b|nba\s*2k\d*|\b2k2\d\b|"
                      r"esportsbattle|cyber|virtual|gg league|"
                      r"table\s+basketball\s+league|\(tbl\)|"
                      r"\be-?basket(?:ball)?\b)",
                      " ".join((competition, home, away))):
-            continue
+            reason = "Virtuální / e-sport"
         state = str(scores.get("currentPeriodName") or
                     scores.get("statusLineStr") or "")
         status_line = str(scores.get("statusLineStr") or "")
@@ -315,6 +373,9 @@ def parse_1xbit(payload: Any) -> list[Match] | None:
             continue
         date = local_date(event.get("startTs"))
         if not date:
+            continue
+        if reason:
+            record_exclusion(excluded, competition, reason, eid, home, away)
             continue
         sc1, sc2 = scores.get("scoreOpp1"), scores.get("scoreOpp2")
         score = (f"{sc1}:{sc2}" if sc1 is not None and sc2 is not None else
@@ -334,9 +395,11 @@ async def synot(browser) -> Source:
     async def handle(res):
         try:
             if res.status == 200 and res.request.method == "POST":
-                matches = parse_synot(await res.json())
+                rejects = []
+                matches = parse_synot(await res.json(), rejects)
                 if matches is not None:
                     snapshots.append(matches)
+                    s.rejected.extend(rejects)
         except Exception as exc:
             LOG.debug("Synot response parse failed: %s", type(exc).__name__)
 
@@ -381,8 +444,10 @@ async def football(browser, client: httpx.AsyncClient, wait_ms: int = 8500) -> S
         response = await client.get(FOOT_API, timeout=15)
         if response.status_code == 200:
             try:
-                parsed = parse_football(response.json())
+                rejects = []
+                parsed = parse_football(response.json(), rejects)
                 if parsed is not None:
+                    s.rejected = rejects
                     s.matches, s.status = parsed, "ÚSPĚCH"
                     return s
                 notes.append("Direct API: unexpected schema")
@@ -403,11 +468,13 @@ async def football(browser, client: httpx.AsyncClient, wait_ms: int = 8500) -> S
             if res.status != 200:
                 notes.append("Browser API HTTP " + str(res.status))
                 return
-            parsed = parse_football(await res.json())
+            rejects = []
+            parsed = parse_football(await res.json(), rejects)
             if parsed is None:
                 notes.append("Browser API: unexpected schema")
             else:
                 snapshots.append(parsed)
+                s.rejected.extend(rejects)
         except Exception as exc:
             notes.append("Browser API: " + type(exc).__name__)
 
@@ -440,9 +507,11 @@ async def football(browser, client: httpx.AsyncClient, wait_ms: int = 8500) -> S
                 }
             }""", FOOT_API)
             if result.get("status") == 200 and "data" in result:
-                parsed = parse_football(result["data"])
+                rejects = []
+                parsed = parse_football(result["data"], rejects)
                 if parsed is not None:
                     snapshots.append(parsed)
+                    s.rejected.extend(rejects)
                 else:
                     notes.append("In-page API: unexpected schema")
             else:
@@ -477,8 +546,10 @@ async def fonbet(browser, client: httpx.AsyncClient, wait_ms: int = 7000) -> Sou
         response = await client.get(FON_API, timeout=15)
         if response.status_code == 200:
             try:
-                parsed = parse_fonbet(response.json())
+                rejects = []
+                parsed = parse_fonbet(response.json(), rejects)
                 if parsed:
+                    src.rejected = rejects
                     src.matches, src.status = parsed, "ÚSPĚCH"
                     return src
                 notes.append("Direct feed: incomplete/empty event listing")
@@ -500,11 +571,13 @@ async def fonbet(browser, client: httpx.AsyncClient, wait_ms: int = 7000) -> Sou
             if response.status != 200:
                 statuses.add("Feed HTTP " + str(response.status))
                 return
-            parsed = parse_fonbet(await response.json())
+            rejects = []
+            parsed = parse_fonbet(await response.json(), rejects)
             if parsed is None:
                 statuses.add("Feed JSON incomplete/delta")
             else:
                 snapshots.append(parsed)
+                src.rejected.extend(rejects)
         except Exception as exc:
             statuses.add("Feed parse " + type(exc).__name__)
 
@@ -556,7 +629,7 @@ async def one_xbit(client: httpx.AsyncClient) -> Source:
         if response.status_code != 200:
             src.error = "API HTTP " + str(response.status_code)
             return src
-        parsed = parse_1xbit(response.json())
+        parsed = parse_1xbit(response.json(), src.rejected)
         if parsed is None:
             src.error = "Unexpected 1xBit LIVE JSON schema"
             return src
