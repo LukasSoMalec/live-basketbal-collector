@@ -76,6 +76,21 @@ def is_simulated(*values: str) -> bool:
     return bool(re.search(r"(?<![a-z])(ebasket|e-basket|cyber|simulated|simulation|virtual|bskt cup|esport)", text))
 
 
+
+def is_unwanted_competition(competition: str) -> bool:
+    """Exclude bookmaker-only fast formats without blocking legitimate leagues.
+
+    Crucially the generic name 'Premier League' matches only on its own or
+    with a generic World/International prefix. 'Israel. Premier League'
+    remains allowed, as do NCAA and real domestic/regional competitions.
+    """
+    name = re.sub(r"\s+", " ", str(competition or "").strip()).casefold()
+    if re.search(r"\b(?:frost[\s-]*ball|ipbl|table[\s-]*basketball[\s-]*league|bskt[\s-]*cup)\b", name):
+        return True
+    generic = re.sub(r"^(?:world|global|international|mezin[aá]rodn[ií])\s*[,/.-]\s*", "", name)
+    return re.fullmatch(r"premier[\s-]+league(?:\s+[a-z])?", generic) is not None
+
+
 def dedup(matches: list[Match]) -> list[Match]:
     found, seen = [], set()
     for m in matches:
@@ -104,7 +119,8 @@ def parse_synot(payload: Any) -> list[Match] | None:
                 e.get("SportExtId") and e.get("SportExtId") != "sr:sport:2"):
             continue
         home, away = split_teams(e.get("Name"))
-        if not home or not away or is_simulated(e.get("CategoryPath"), home, away):
+        if (not home or not away or is_unwanted_competition(e.get("CategoryPath"))
+                or is_simulated(e.get("CategoryPath"), home, away)):
             continue
         external = str(e.get("ExternalID") or "")
         scores = e.get("Results") or []
@@ -137,17 +153,7 @@ def parse_football(payload: Any) -> list[Match] | None:
             home, away = e.get("homeTeamName") or "", e.get("awayTeamName") or ""
             if not home or not away:
                 continue
-            bskt_cup = bool(re.search(r"\bbskt\s+cup\b", league, re.I))
-            # BSKT CUP is real fast 5x5 basketball, NOT a virtual/esports feed.
-            # It is enabled only after deploying the updated Apps Script
-            # because the old sheet writer merges repeated same-day opponents.
-            if bskt_cup:
-                if os.environ.get("ENABLE_BSKT_CUP") != "1":
-                    continue
-                if not re.fullmatch(r"sr:match:[A-Za-z0-9|_-]{6,120}",
-                                    str(e.get("eventId") or "")):
-                    continue
-            elif is_simulated(league, home, away):
+            if is_unwanted_competition(league) or is_simulated(league, home, away):
                 continue
             event_id = str(e.get("eventId") or "")
             matches.append(Match(home, away, league, local_date(e.get("estimateStartTime")),
@@ -220,7 +226,8 @@ def parse_fonbet(payload: Any) -> list[Match] | None:
         if not home or not away:
             continue
         competition = basketball_league(event.get("sportId"))
-        if not competition or is_simulated(competition, home, away):
+        if (not competition or is_unwanted_competition(competition)
+                or is_simulated(competition, home, away)):
             continue
         if re.search(r"(?i)(ipbl|esportsbattle|nba\s*2k|h2h|gg league|cyber|virtual)", " ".join((competition, home, away))):
             continue
@@ -287,7 +294,7 @@ def parse_1xbit(payload: Any) -> list[Match] | None:
         competition = name(league)
         if not home or not away or not competition:
             continue
-        if is_simulated(competition, home, away):
+        if is_unwanted_competition(competition) or is_simulated(competition, home, away):
             continue
         if re.search(r"(?i)(?:\bipbl\b|nba\s*2k\d*|\b2k2\d\b|"
                      r"esportsbattle|cyber|virtual|gg league|"
