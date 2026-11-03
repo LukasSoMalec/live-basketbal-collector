@@ -33,6 +33,12 @@ Při čistém integračním testu 2026-11-02 v 19:19 se podařilo spojit `AS Pap
 
 **Nutný jednorázový krok: tuto verzi z GitHubu znovu nasadit v Google Apps Scriptu.** Přepsat obsah `Code.gs`, pak `Nasadit → Spravovat nasazení → Upravit (tužka) → Nová verze → Nasadit`. GitHub workflow samo o sobě neupravuje nasazenou webovou aplikaci. Po aktualizaci už se opravy budou provádět při každém běhu automaticky; tabulku není třeba čistit ani znovu zakládat.
 
+## Trvalé ruční slučování zápasů
+
+Po ručním sloučení přes `ManualMerge.gs` se původní řádky ukládají do listu `Archiv duplicit` s rolí `MANUAL MERGED FROM`. Nová verze `GoogleAppsScript.gs` tato historická rozhodnutí při každém ingestu znovu načítá: mapuje původní název soutěže a obou týmů (jen pro původní zdroj, který měl `ANO`) na **aktuálně zachovaný zápas**. Zvládá i více navazujících ručních sloučení, například A → B → C. Pokud už se smazaná varianta mezitím znovu objevila, provede navíc retrospektivní úklid včetně archivace, bez ztráty potvrzených `ANO`.
+
+Vazby **nepřepisují konfliktní ověřená SportRadar ani neprůhledná ID**; neaktivují se pro rychlé `BSKT CUP` zápasy a nikdy nepřekračují datum utkání. Nejednoznačné vazby se nepoužijí. Archiv nemaž, je zdrojem trvalých aliasů i historie. Pro aktivaci je nutné nahrát aktuální `GoogleAppsScript.gs` a vytvořit novou verzi stávající Apps Script webové aplikace. `ManualMerge.gs` není nutné znovu měnit.
+
 ## Filtrace soutěží a evidence vyřazených LIVE zápasů
 
 Sledujeme **klasické soutěžní basketbalové zápasy**, ne bookmaker-only minisoutěže, virtuální hry ani eBasket. Sdílený filtr všech čtyř zdrojů vyřazuje mimo jiné `FrostBall`, samostatné `Premier League` / `Premier League A`, `IPBL`, `BSKT CUP`, `Table Basketball League` a e-sport. Konkrétní názvy jako `Israel. Premier League` **nesmí být automaticky vyřazeny** kvůli slovu Premier.
