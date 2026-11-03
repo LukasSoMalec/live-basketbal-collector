@@ -37,7 +37,15 @@ Při čistém integračním testu 2026-11-02 v 19:19 se podařilo spojit `AS Pap
 
 Po ručním sloučení přes `ManualMerge.gs` se původní řádky ukládají do listu `Archiv duplicit` s rolí `MANUAL MERGED FROM`. Nová verze `GoogleAppsScript.gs` tato historická rozhodnutí při každém ingestu znovu načítá: mapuje původní název soutěže a obou týmů (jen pro původní zdroj, který měl `ANO`) na **aktuálně zachovaný zápas**. Zvládá i více navazujících ručních sloučení, například A → B → C. Pokud už se smazaná varianta mezitím znovu objevila, provede navíc retrospektivní úklid včetně archivace, bez ztráty potvrzených `ANO`.
 
-Vazby **nepřepisují konfliktní ověřená SportRadar ani neprůhledná ID**; neaktivují se pro rychlé `BSKT CUP` zápasy a nikdy nepřekračují datum utkání. Nejednoznačné vazby se nepoužijí. Archiv nemaž, je zdrojem trvalých aliasů i historie. Pro aktivaci je nutné nahrát aktuální `GoogleAppsScript.gs` a vytvořit novou verzi stávající Apps Script webové aplikace. `ManualMerge.gs` není nutné znovu měnit.
+Vazby na **konkrétní zápasy** nepřepisují konfliktní ověřená SportRadar ani neprůhledná ID; neaktivují se pro rychlé `BSKT CUP` zápasy a nikdy nepřekračují datum utkání. Nejednoznačné vazby se nepoužijí. Archiv nemaž, je zdrojem trvalých aliasů i historie. Pro aktivaci je nutné nahrát aktuální `GoogleAppsScript.gs` a vytvořit novou verzi stávající Apps Script webové aplikace. `ManualMerge.gs` není nutné znovu měnit.
+
+### Znovupoužitelné aliasy názvů týmů
+
+Skript navíc automaticky založí **`Aliasy týmů`**, pokud ještě neexistuje. Z explicitně potvrzených ručních sloučení v `Archiv duplicit` do něj doplní pro každou sázkovku a soutěž zvlášť ekvivalence **název týmu u zdroje → kanonický název týmu** (pro domácí i hosty). Ověřené synonymum se pak používá i v **jiném utkání a jiný den**, přestože původní soupeř už nehraje. Při hledání shody musí souhlasit oba týmy utkání, den, kategorie dospělí/ženy/mládež, související soutěž a nesmějí být konfliktní ověřená ID. Neznámé nebo konfliktní aliasy nevyvolávají nucené sloučení. Původní pravidla pro aktuální zápasy zůstávají zachována.
+
+Sloupce `Aliasy týmů`: **Zdroj**, **Soutěž u zdroje**, **Název týmu u zdroje**, **Odpovídající tým**, **Kategorie** (např. `adult|unspecified`), **Soutěž cílového týmu**, **Původ**, **Aktivní** (`ANO` / `NE`). Alias lze vypnout změnou `Aktivní` na `NE`, bez dalšího nasazování. Už ručně zadané záznamy se nepřepisují; při nejednoznačném automatickém učení se nový alias nevytvoří. Vytvoření listu i doplnění starších archivovaných ručních sloučení proběhne při první kontrole po nasazení. Soubor `ManualMerge.gs` se měnit nemusí.
+
+
 
 ## Filtrace soutěží a evidence vyřazených LIVE zápasů
 
