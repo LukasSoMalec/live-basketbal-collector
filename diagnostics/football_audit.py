@@ -6,6 +6,10 @@ Only summaries and event metadata; no bookmaker cookies or private access.
 import asyncio
 import logging
 import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from collections import Counter
 
 import httpx
