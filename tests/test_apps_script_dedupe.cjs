@@ -183,9 +183,61 @@ function runMockIngestion() {
   assert.match(games.rows[2][12],/ZKONTROLOVAT DUPLIKAT/);
 }
 
+function testRapidRepeatEventIdentityAcrossPolls() {
+  const games=new FakeSheet([Array(13).fill('HEADER')]);
+  const checks=new FakeSheet([]);
+  const sources=new FakeSheet([Array(6).fill('H')]);
+  const tabs={Zápasy:games,Kontroly:checks,Zdroje:sources};
+  context.SpreadsheetApp={openById:()=>({
+    getSheetByName:name=>tabs[name]||null,
+    insertSheet:name=>(tabs[name]=new FakeSheet())
+  })};
+  const m=(id,game)=>({
+    home:'Alligators',away:'Lions',competition:'BSKT CUP',date,
+    eventId:id,providerId:game,state:'Q2',score:'32:32'
+  });
+  const idA='sr:match:BAaGde|NHdp-rkVS9wMWaBw';
+  const idB='sr:match:BAaGde|differentMatchAbc';
+  const sourcesIn=[
+    {source:'SynotTip',status:'ÚSPĚCH',complete:false,matches:[]},
+    {source:'Fonbet',status:'ÚSPĚCH',complete:false,matches:[]},
+    {source:'1xBit',status:'ÚSPĚCH',complete:false,matches:[]},
+    {source:'Football.com',status:'ÚSPĚCH',complete:false,
+      matches:[m(idA,'33827'),m(idB,'33841')]}
+  ];
+  const payload={checkedAt:'2026-11-03T10:00:00Z',sources:sourcesIn};
+  const first=context.saveSnapshot_(payload);
+  assert.equal(first.created,2);
+  assert.equal(first.mergedDuplicates,0);
+  assert.equal(first.positiveObservations,2);
+  assert.equal(games.getLastRow(),3);
+  assert.notEqual(games.rows[1][0],games.rows[2][0]);
+  assert.match(games.rows[1][12],/football:event:sr:match:BAaGde/);
+  assert.equal(context.rowFootballOpaqueId_(games.rows[1][12]),idA);
+  assert.equal(context.rowFootballOpaqueId_(games.rows[2][12]),idB);
+  assert.equal(context.sameHistoricalFixture_(games.rows[1],games.rows[2]),false);
+  payload.checkedAt='2026-11-03T10:15:00Z';
+  const second=context.saveSnapshot_(payload);
+  assert.equal(second.created,0);
+  assert.equal(second.mergedDuplicates,0);
+  assert.equal(second.positiveObservations,2);
+  assert.equal(games.getLastRow(),3);
+  assert.equal(games.rows[1][11],2);
+  assert.equal(games.rows[2][11],2);
+  assert.equal(tabs['Archiv duplicit'],undefined);
+
+  const missingId=m('','33842');
+  payload.sources[3].matches=[missingId];
+  const third=context.saveSnapshot_(payload);
+  assert.equal(third.created,0);
+  assert.equal(third.positiveObservations,0);
+  assert.equal(games.getLastRow(),3);
+}
+
 testMultipleAliasesMergeAndAudit();
 testKnownIdOverridesNameDifferenceButNotGender();
 testConflictAndCategoriesRemainSeparateAndFlagged();
 testMultipleIdsAcrossThirdVariantNotTransitive();
 runMockIngestion();
+testRapidRepeatEventIdentityAcrossPolls();
 console.log('Historical duplicate detection, full mock ingest, audit and conflict tests passed');
