@@ -1,7 +1,7 @@
 import unittest
 import os
 from unittest import mock
-from collector import Match, Source, parse_synot, parse_football, parse_fonbet, parse_1xbit, is_unwanted_competition, split_teams, reconcile_fonbet_references, reconcile_1xbit_references, team_equivalent, reconcile_semantic_references
+from collector import Match, Source, parse_synot, parse_football, parse_fonbet, parse_1xbit, summarize_exclusions, is_unwanted_competition, split_teams, reconcile_fonbet_references, reconcile_1xbit_references, team_equivalent, reconcile_semantic_references
 
 
 class ParserTests(unittest.TestCase):
@@ -80,6 +80,54 @@ class ParserTests(unittest.TestCase):
         for league in allowed:
             with self.subTest(allowed=league):
                 self.assertFalse(is_unwanted_competition(league))
+
+    def test_rejected_league_audit_only_counts_live_and_groups_duplicates(self):
+        report = []
+        football = {"data": [{"name": "FrostBall", "events": [
+            {"status": 1, "sport": {"id": "sr:sport:2"}, "matchStatus": "Q2",
+             "homeTeamName": "Lynx FB", "awayTeamName": "Archers FB",
+             "eventId": "sr:match:101001"},
+            {"status": 1, "sport": {"id": "sr:sport:2"}, "matchStatus": "Q2",
+             "homeTeamName": "Lynx FB", "awayTeamName": "Archers FB",
+             "eventId": "sr:match:101001"},
+            {"status": 0, "sport": {"id": "sr:sport:2"}, "matchStatus": "NS",
+             "homeTeamName": "Other", "awayTeamName": "Other2",
+             "eventId": "sr:match:101002"},
+        ]}]}
+        self.assertEqual(parse_football(football, report), [])
+        summary = summarize_exclusions(report)
+        self.assertEqual(len(report), 2)
+        self.assertEqual(len(summary), 1)
+        self.assertEqual(summary[0]["competition"], "FrostBall")
+        self.assertEqual(summary[0]["reason"], "Nežádoucí soutěž")
+        self.assertEqual(summary[0]["count"], 1)
+        self.assertEqual(summary[0]["example"], "Lynx FB – Archers FB")
+        source = Source("Football.com", status="ÚSPĚCH", rejected=report)
+        self.assertEqual(source.as_dict()["rejectedCompetitions"], summary)
+        self.assertNotIn("rejected", source.as_dict())
+        source.status = "NEDOSTUPNÉ"
+        self.assertEqual(source.as_dict()["rejectedCompetitions"], [])
+
+    def test_rejected_audit_1xbit_excludes_prematch_from_counts(self):
+        def make(status, match_id):
+            return {
+                "id": match_id, "mainGameId": match_id,
+                "sport": {"id": 3}, "liga": {"nameEng": "Premier League A"},
+                "menuSection": 2, "kind": 1, "startTs": 1793691000,
+                "opponent1": {"fullNameEng": "Spiders"},
+                "opponent2": {"fullNameEng": "Tigers"},
+                "scores": {
+                    "currentPeriod": 1, "currentPeriodName": status,
+                    "statusLineStr": status, "scoreOpp1": 4, "scoreOpp2": 3,
+                }
+            }
+        rejected = []
+        self.assertEqual(parse_1xbit([
+            make("Q1", 901), make("Do začátku zbývá 11 min.", 902)
+        ], rejected), [])
+        summary = summarize_exclusions(rejected)
+        self.assertEqual(len(summary), 1)
+        self.assertEqual(summary[0]["count"], 1)
 
     def test_new_filter_applies_to_all_four_sources(self):
         synot = {"Result": 1, "ReturnValue": [
