@@ -120,13 +120,16 @@ def summarize_exclusions(exclusions: list[dict]) -> list[dict]:
             continue
         key = (name.casefold(), reason)
         if key not in grouped:
-            grouped[key] = {"competition": name, "reason": reason, "fixtures": set()}
+            home = str(item.get("home") or "")
+            away = str(item.get("away") or "")
+            grouped[key] = {"competition": name, "reason": reason, "fixtures": set(),
+                            "example": (home + " – " + away)[:180] if home and away else ""}
         fixture = (item.get("eventId") or
                    (str(item.get("home") or "").casefold() + "|" +
                     str(item.get("away") or "").casefold()))
         grouped[key]["fixtures"].add(fixture)
     return [{"competition": value["competition"], "reason": value["reason"],
-             "count": len(value["fixtures"])}
+             "count": len(value["fixtures"]), "example": value["example"]}
             for _, value in sorted(grouped.items())][:250]
 
 
