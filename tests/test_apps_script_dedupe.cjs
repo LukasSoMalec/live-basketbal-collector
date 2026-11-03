@@ -183,6 +183,54 @@ function runMockIngestion() {
   assert.match(games.rows[2][12],/ZKONTROLOVAT DUPLIKAT/);
 }
 
+function testTownsvillePerthThreeProvidersMerge() {
+  const matchDate = '2026-11-03';
+  const a = row('Australia. WNBL', 'Townsville Fire (Women)',
+    'Perth Lynx (Women)', 7, '; 1xBit: 1. čtvrtina',
+    '2026-11-03 8:45:52', '2026-11-03 9:46:01', 8, matchDate);
+  const b = row('Austrálie / WNBL', 'Townsville Fire',
+    'Perth Lynx', 5, 'sr:match:72704662; SynotTip: Nezačalo; Fonbet: live',
+    '2026-11-03 9:01:28', '2026-11-03 9:46:01', 7, matchDate);
+  b[6] = 'ANO';
+  b[8] = 'ANO';
+  const c = row('Australia. Women. WNBL', 'Townsville Fire (w)',
+    'Perth (w)', 6, '; Fonbet: live',
+    '2026-11-03 9:42:10', '2026-11-03 9:46:01', 2, matchDate);
+  const rows=[a,b,c];
+  assert.equal(context.fixtureClass_(a[2],a[3],a[4]), 'adult|women');
+  assert.equal(context.fixtureClass_(b[2],b[3],b[4]), 'adult|women');
+  assert.equal(context.fixtureClass_(c[2],c[3],c[4]), 'adult|women');
+  assert.equal(context.sameFixture_(matchDate,c[3],c[4],c[2],b,''),true);
+  assert.equal(context.sameFixture_(matchDate,a[3],a[4],a[2],b,''),true);
+
+  const plan=context.planHistoricalDeduplication_(rows,'2026-11-03 9:47:00');
+  assert.equal(plan.merged,2);
+  assert.equal(plan.archive.length,3);
+  assert.equal(plan.reviewCandidates,0);
+  const master=rows[plan.masterByIndex.get(0)];
+  assert.equal(master[5],'ANO');
+  assert.equal(master[6],'ANO');
+  assert.equal(master[7],'ANO');
+  assert.equal(master[8],'ANO');
+  assert.equal(master[11],8);
+  assert.match(master[12],/sr:match:72704662/);
+  assert.match(master[12],/1xBit: 1. čtvrtina/);
+  assert.match(master[12],/Fonbet: live/);
+  assert.equal(master[9],'2026-11-03 8:45:52');
+
+  // The short form Perth (w) must not turn into Perth Lynx outside WNBL.
+  assert.equal(context.fixtureTeamAlias_('Perth (w)','Australia. NBL'),
+    'Perth (w)');
+  assert.equal(context.sameFixture_('2026-11-03',
+    'Townsville Fire (w)','Perth (w)','Australia. Some Regional Women',
+    b,''), false);
+  // Distinct verified event IDs still prevent automatic merging.
+  const conflict=row('Austrálie / WNBL','Townsville Fire (w)',
+    'Perth (w)',6,'sr:match:99999999',undefined,undefined,1,matchDate);
+  assert.equal(context.sameFixture_(matchDate,conflict[3],conflict[4],
+    conflict[2],b,'sr:match:99999999'),false);
+}
+
 function testRapidRepeatEventIdentityAcrossPolls() {
   const games=new FakeSheet([Array(13).fill('HEADER')]);
   const checks=new FakeSheet([]);
@@ -239,5 +287,6 @@ testKnownIdOverridesNameDifferenceButNotGender();
 testConflictAndCategoriesRemainSeparateAndFlagged();
 testMultipleIdsAcrossThirdVariantNotTransitive();
 runMockIngestion();
+testTownsvillePerthThreeProvidersMerge();
 testRapidRepeatEventIdentityAcrossPolls();
 console.log('Historical duplicate detection, full mock ingest, audit and conflict tests passed');
