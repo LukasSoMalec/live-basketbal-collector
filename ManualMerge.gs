@@ -26,10 +26,18 @@ function manualMergeIds_(note) {
     .map(id => id.toLowerCase()).sort();
 }
 
+function manualMergeFootballIds_(note) {
+  return [...new Set(Array.from(
+    String(note || '').matchAll(/football:event:(sr:match:[a-zA-Z0-9|_-]{6,120})/g),
+    m => m[1]
+  ))].sort();
+}
+
 function manualMergeIdentity_(row) {
   return JSON.stringify([
     String(row[0]), manualMergeDate_(row[1]), String(row[2]),
-    String(row[3]), String(row[4]), manualMergeIds_(row[12])
+    String(row[3]), String(row[4]),
+    manualMergeIds_(row[12]), manualMergeFootballIds_(row[12])
   ]);
 }
 
@@ -82,6 +90,10 @@ function manualMergeRows() {
   const uniqueIds = new Set(before.flatMap(r => manualMergeIds_(r[12])));
   if (uniqueIds.size > 1) {
     return ui.alert('STOP: Řádky obsahují různá SportRadar ID. Nic jsem nesloučil.');
+  }
+  const footballIds = new Set(before.flatMap(r => manualMergeFootballIds_(r[12])));
+  if (footballIds.size > 1) {
+    return ui.alert('STOP: Řádky obsahují různá ID utkání Football.com. Nic jsem nesloučil.');
   }
 
   const preview = numbers.map((n, i) =>
