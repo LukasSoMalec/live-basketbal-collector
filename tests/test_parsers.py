@@ -162,11 +162,14 @@ class ParserTests(unittest.TestCase):
             event(767456285, "ABA League"),
             event(2, "NBA 2K26. Super Series"),
             event(3, "IPBL. Pro Division"),
+            event(8, "Table Basketball League", "Brazil (TBL)", "Finland (TBL)"),
+            event(9, "ABA League"),
             event(4, "ABA League", sport_id=1),
             event(5, "ABA League", menu=1),
             event(6, "ABA League", period=0),
             event(7, "ABA League", main_id=99),
         ]
+        payload[3]["scores"]["statusLineStr"] = "Do začátku zbývá 11 min."
         parsed = parse_1xbit(payload)
         self.assertEqual(len(parsed), 1)
         self.assertEqual(parsed[0].home, "Mega")
