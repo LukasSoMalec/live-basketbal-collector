@@ -455,7 +455,8 @@ function updateRejectedLeagues_(ss, sourceMap, stamp) {
           count < 1 || count > 3000) continue;
       const key = keyOf(source, competition, reason);
       const prev = perPoll.get(key);
-      perPoll.set(key, {competition, reason, example: prev?.example || example,
+      perPoll.set(key, {competition: prev?.competition || competition,
+        reason: prev?.reason || reason, example: prev?.example || example,
         count: (prev?.count || 0) + count});
     }
     for (const [key, entry] of perPoll.entries()) {
