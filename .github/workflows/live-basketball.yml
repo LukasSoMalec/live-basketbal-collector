@@ -1,8 +1,12 @@
 name: LIVE basketbal - 4 sazkovky
 on:
   schedule:
-    - cron: '0,20,40 * * * *'
+    - cron: '7,27,47 * * * *'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-basketball.yml'
 permissions:
   contents: read
 concurrency:
