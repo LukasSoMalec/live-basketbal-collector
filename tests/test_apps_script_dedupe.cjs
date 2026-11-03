@@ -368,6 +368,11 @@ function testManualArchiveAliasesPreventRespawnAndReplayChains() {
   const tail=row('Philippines. NCAA','San Sebastian College',
     'Arellano University Chiefs',7,'1xBit: Q2',
     '2026-11-03 8:31:09','2026-11-03 10:15:00',7,date);
+  // Test helper uses date as its placeholder A-key; the real sheet uses
+  // unique fixture keys, which the manual merge archives to resolve aliases.
+  master[0]='2026-11-03|filipiny ncaa seniors|sscr stags|au chiefs';
+  mid[0]='2026-11-03|philippines ncaa|sscr stags|arellano univ chiefs';
+  tail[0]='2026-11-03|philippines ncaa|san sebastian college|arellano university chiefs';
   const archiveHeader=[
     'Čas sloučení','Klíč zachovaného zápasu','Původní řádek','Role',
     'Klíč zápasu','Datum utkání','Soutěž','Domácí','Hosté',
@@ -438,6 +443,8 @@ function testManualArchiveAliasRejectsConflictingIdsAndDates() {
     'sr:match:72704662',ts,ts,2,'2026-11-03');
   const old=row('Australia. WNBL','Townsville Fire (Women)',
     'Perth Lynx (Women)',7,'sr:match:99999999',ts,ts,2,'2026-11-03');
+  master[0]='2026-11-03|australia wnbl|townsville fire|perth lynx';
+  old[0]='2026-11-03|australia wnbl|townsville fire women|perth lynx women';
   const history=[[
     '2026-11-03 09:05:00',master[0],3,'MANUAL MERGED FROM',...old
   ]];
