@@ -414,7 +414,7 @@ function updateRejectedLeagues_(ss, sourceMap, stamp) {
   if (!sheet) sheet = ss.insertSheet('Vyřazené soutěže');
   const headers = [
     'Zdroj', 'Soutěž', 'Důvod', 'Poprvé', 'Naposledy',
-    'Kontrol s výskytem', 'Součet výskytů', 'V poslední kontrole'
+    'Kontrol s výskytem', 'Součet výskytů', 'V poslední kontrole', 'Příklad zápasu'
   ];
   if (sheet.getLastRow() === 0) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
@@ -449,12 +449,14 @@ function updateRejectedLeagues_(ss, sourceMap, stamp) {
       if (!item || typeof item !== 'object') continue;
       const competition = safeText(item.competition);
       const reason = safeText(item.reason);
+      const example = safeText(item.example);
       const count = Number(item.count);
       if (!competition || !reason || !Number.isSafeInteger(count) ||
           count < 1 || count > 3000) continue;
       const key = keyOf(source, competition, reason);
       const prev = perPoll.get(key);
-      perPoll.set(key, {competition, reason, count: (prev?.count || 0) + count});
+      perPoll.set(key, {competition, reason, example: prev?.example || example,
+        count: (prev?.count || 0) + count});
     }
     for (const [key, entry] of perPoll.entries()) {
       total += entry.count;
@@ -464,17 +466,18 @@ function updateRejectedLeagues_(ss, sourceMap, stamp) {
         ix = rows.length;
         index.set(key, ix);
         rows.push([source, entry.competition, entry.reason, stamp, stamp,
-          1, entry.count, entry.count]);
+          1, entry.count, entry.count, entry.example]);
         continue;
       }
       const row = rows[ix];
-      const samePoll = String(row[4]) === stamp;
+      const samePoll = comparableStamp_(row[4]) === stamp;
       const previousLastCount = Number(row[7]) || 0;
       row[4] = stamp;
       if (!samePoll) row[5] = (Number(row[5]) || 0) + 1;
       row[6] = (Number(row[6]) || 0) +
         (samePoll ? entry.count - previousLastCount : entry.count);
       row[7] = entry.count;
+      if (entry.example) row[8] = entry.example;
     }
   }
   if (rows.length)
