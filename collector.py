@@ -551,9 +551,10 @@ async def fonbet(browser, client: httpx.AsyncClient, wait_ms: int = 7000) -> Sou
             try:
                 rejects = []
                 parsed = parse_fonbet(response.json(), rejects)
-                if parsed:
+                if parsed is not None and (parsed or rejects):
                     src.rejected = rejects
-                    src.matches, src.status = parsed, "ÚSPĚCH"
+                    src.matches = parsed
+                    src.status = "ÚSPĚCH" if parsed else "ČÁSTEČNĚ"
                     return src
                 notes.append("Direct feed: incomplete/empty event listing")
             except ValueError:
