@@ -465,6 +465,123 @@ function testManualArchiveAliasRejectsConflictingIdsAndDates() {
   ).byIncoming.size,0);
 }
 
+function testTeamAliasesRememberAcrossDaysAndOpponents() {
+  const oldDate='2026-11-03';
+  const master=row('Filipíny / NCAA, seniors','Sscr Stags','Au Chiefs',5,
+    'sr:match:74250436',ts,ts,3,oldDate);
+  master[0]='2026-11-03|filipiny ncaa seniors|sscr stags|au chiefs';
+  const previous=row('Philippines. NCAA','San Sebastian College',
+    'Arellano University Chiefs',7,'1xBit: Q2',ts,ts,2,oldDate);
+  previous[0]='2026-11-03|philippines ncaa|san sebastian college|arellano university chiefs';
+  const archive=new FakeSheet([
+    Array(17).fill('HEADER'),
+    ['2026-11-03 10:15:00',master[0],9,'MANUAL MERGED FROM',...previous]
+  ]);
+  const games=new FakeSheet([Array(13).fill('HEADER'),master]);
+  const checks=new FakeSheet([]);
+  const sourceSheet=new FakeSheet([Array(6).fill('HEADER')]);
+  const sheets={Zápasy:games,'Archiv duplicit':archive,
+    Kontroly:checks,Zdroje:sourceSheet};
+  context.SpreadsheetApp={openById:()=>({
+    getSheetByName:name=>sheets[name]||null,
+    insertSheet:name=>(sheets[name]=new FakeSheet())
+  })};
+  const mk=(name,home,away,date,id='')=>({
+    source:name,status:'ÚSPĚCH',complete:false,matches:[
+      {date,home,away,competition:name==='1xBit'?'Philippines. NCAA':
+        'Filipíny / NCAA, seniors',eventId:id,providerId:'',state:'Q1',score:'10:8'}
+    ]
+  });
+  const empty=name=>({source:name,status:'ÚSPĚCH',complete:false,matches:[]});
+  const d1='2026-11-04';
+  const payload={
+    checkedAt:'2026-11-04T08:15:00Z',
+    sources:[
+      mk('SynotTip','Sscr Stags','Mapua Cardinals',d1,'sr:match:75000001'),
+      empty('Fonbet'),
+      mk('1xBit','San Sebastian College','Mapua Cardinals',d1),
+      empty('Football.com')
+    ]
+  };
+  const first=context.saveSnapshot_(payload);
+  assert.equal(first.created,1);
+  assert.equal(first.currentRows,2);
+  assert.equal(games.rows[2][5],'ANO');
+  assert.equal(games.rows[2][7],'ANO');
+  assert.equal(games.rows[2][12].includes('sr:match:75000001'),true);
+  const aliases=sheets['Aliasy týmů'];
+  assert.equal(aliases.getLastRow(),3);
+  assert.equal(aliases.rows[1][0],'1xBit');
+  assert.equal(aliases.rows[1][2],'San Sebastian College');
+  assert.equal(aliases.rows[1][3],'Sscr Stags');
+  assert.equal(aliases.rows[1][7],'ANO');
+
+  // On the next day the bookmaker with the alias arrives FIRST.
+  const d2='2026-11-05';
+  payload.checkedAt='2026-11-05T08:00:00Z';
+  payload.sources=[empty('SynotTip'),empty('Fonbet'),
+    mk('1xBit','San Sebastian College','Jose Rizal University',d2),
+    empty('Football.com')];
+  const second=context.saveSnapshot_(payload);
+  assert.equal(second.created,1);
+  assert.equal(second.currentRows,3);
+
+  payload.checkedAt='2026-11-05T08:15:00Z';
+  payload.sources=[mk('SynotTip','Sscr Stags','Jose Rizal University',d2,
+      'sr:match:75000002'),empty('Fonbet'),empty('1xBit'),
+    empty('Football.com')];
+  const third=context.saveSnapshot_(payload);
+  assert.equal(third.created,0);
+  assert.equal(third.currentRows,3);
+  const recent=games.rows.find(r=>r[1]===d2);
+  assert.equal(recent[5],'ANO');
+  assert.equal(recent[7],'ANO');
+  assert.match(recent[12],/sr:match:75000002/);
+
+  // Other opponents are separate games; future dates aren't collapsed.
+  payload.checkedAt='2026-11-05T08:30:00Z';
+  payload.sources=[empty('SynotTip'),empty('Fonbet'),
+    mk('1xBit','San Sebastian College','Another Team',d2),
+    empty('Football.com')];
+  const other=context.saveSnapshot_(payload);
+  assert.equal(other.created,1);
+  assert.equal(other.currentRows,4);
+  assert.equal(aliases.getLastRow(),3); // Rebuild is idempotent.
+
+  // Editing Active=NE in Sheets prevents reuse without code changes.
+  aliases.rows[1][7]='NE';
+  payload.checkedAt='2026-11-06T08:00:00Z';
+  payload.sources=[mk('SynotTip','Sscr Stags','New Opponent','2026-11-06'),
+    empty('Fonbet'),mk('1xBit','San Sebastian College','New Opponent','2026-11-06'),
+    empty('Football.com')];
+  const disabled=context.saveSnapshot_(payload);
+  assert.equal(disabled.created,2);
+  assert.equal(disabled.currentRows,6);
+}
+
+function testTeamAliasesNeverOverrideConflictingVerifiedIds() {
+  const cls='adult|unspecified';
+  const a={
+    dictionary:new Map([[
+      context.teamAliasKey_('1xBit','Philippines. NCAA','San Sebastian College',cls),
+      {canonical:context.normTeam_('Sscr Stags'),scope:context.normLeague_('Filipíny / NCAA, seniors')}
+    ]]),
+    leagueGroups:new Map([[context.normLeague_('Philippines. NCAA'),
+      context.normLeague_('Filipíny / NCAA, seniors')]])
+  };
+  const original=row('Filipíny / NCAA, seniors','Sscr Stags','Mapua Cardinals',
+    5,'sr:match:11111111',ts,ts,1,'2026-11-05');
+  assert.equal(context.sameLearnedAliasFixture_(a,'1xBit','2026-11-05',
+    'San Sebastian College','Mapua Cardinals','Philippines. NCAA',original,
+    'sr:match:22222222'),false);
+  assert.equal(context.sameLearnedAliasFixture_(a,'1xBit','2026-11-06',
+    'San Sebastian College','Mapua Cardinals','Philippines. NCAA',original,''),false);
+  const youth=row('Filipíny / NCAA U19','Sscr Stags U19','Mapua Cardinals U19',
+    5,'',ts,ts,1,'2026-11-05');
+  assert.equal(context.sameLearnedAliasFixture_(a,'1xBit','2026-11-05',
+    'San Sebastian College','Mapua Cardinals','Philippines. NCAA',youth,''),false);
+}
+
 testMultipleAliasesMergeAndAudit();
 testKnownIdOverridesNameDifferenceButNotGender();
 testConflictAndCategoriesRemainSeparateAndFlagged();
@@ -475,4 +592,6 @@ testRapidRepeatEventIdentityAcrossPolls();
 testRejectedLeagueAuditAcrossRunsAndSources();
 testManualArchiveAliasesPreventRespawnAndReplayChains();
 testManualArchiveAliasRejectsConflictingIdsAndDates();
+testTeamAliasesRememberAcrossDaysAndOpponents();
+testTeamAliasesNeverOverrideConflictingVerifiedIds();
 console.log('Historical duplicate detection, full mock ingest, audit and conflict tests passed');
