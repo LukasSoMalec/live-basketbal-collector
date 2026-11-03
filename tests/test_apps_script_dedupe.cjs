@@ -357,6 +357,107 @@ function testRejectedLeagueAuditAcrossRunsAndSources() {
   assert.match(checks.rows[checks.rows.length-1][9],/3 vyřazených LIVE/);
 }
 
+function testManualArchiveAliasesPreventRespawnAndReplayChains() {
+  const date='2026-11-03';
+  const master=row('Filipíny / NCAA, seniors','Sscr Stags','Au Chiefs',5,
+    'sr:match:74250436', '2026-11-03 8:20:41',
+    '2026-11-03 10:15:00',9,date);
+  master[8]='ANO';
+  const mid=row('Philippines. NCAA','SSCR Stags','Arellano Univ Chiefs',6,
+    'Fonbet: live','2026-11-03 8:31:09','2026-11-03 10:15:00',7,date);
+  const tail=row('Philippines. NCAA','San Sebastian College',
+    'Arellano University Chiefs',7,'1xBit: Q2',
+    '2026-11-03 8:31:09','2026-11-03 10:15:00',7,date);
+  const archiveHeader=[
+    'Čas sloučení','Klíč zachovaného zápasu','Původní řádek','Role',
+    'Klíč zápasu','Datum utkání','Soutěž','Domácí','Hosté',
+    'SynotTip','Fonbet','1xBit','Football.com',
+    'Poprvé','Naposledy','Počet kontrol','Poznámka'
+  ];
+  const history=[
+    ['2026-11-03 8:32:00',mid[0],5,'MANUAL MERGED FROM',...tail],
+    ['2026-11-03 8:33:12',master[0],6,'MANUAL MERGED FROM',...mid],
+  ];
+  const games=new FakeSheet([Array(13).fill('HEADER'),master,mid,tail]);
+  const audit=new FakeSheet([archiveHeader,...history]);
+  const checks=new FakeSheet([]);
+  const sources=new FakeSheet([Array(6).fill('HEADER')]);
+  const sheets={Zápasy:games,'Archiv duplicit':audit,Kontroly:checks,Zdroje:sources};
+  context.SpreadsheetApp={openById:()=>({
+    getSheetByName:name=>sheets[name]||null,
+    insertSheet:name=>(sheets[name]=new FakeSheet())
+  })};
+  const aliases=context.manualArchiveLinks_({
+    getSheetByName:name=>sheets[name]||null
+  },games.rows.slice(1));
+  assert.equal(aliases.byExisting.get(1),0);
+  assert.equal(aliases.byExisting.get(2),0);
+  assert.equal(aliases.byIncoming.get(
+    'Fonbet|2026-11-03|philippines ncaa|sscr stags|arellano univ chiefs'),0);
+  assert.equal(aliases.byIncoming.get(
+    '1xBit|2026-11-03|philippines ncaa|san sebastian college|arellano university chiefs'),0);
+  const match=(league,home,away)=>({
+    date,competition:league,home,away,eventId:'',state:'Q2'
+  });
+  const info=[
+    {source:'SynotTip',status:'ÚSPĚCH',complete:false,matches:[]},
+    {source:'Fonbet',status:'ÚSPĚCH',complete:false,matches:[
+      match('Philippines. NCAA','SSCR Stags','Arellano Univ Chiefs')]},
+    {source:'1xBit',status:'ÚSPĚCH',complete:false,matches:[
+      match('Philippines. NCAA','San Sebastian College','Arellano University Chiefs')]},
+    {source:'Football.com',status:'ÚSPĚCH',complete:false,matches:[]},
+  ];
+  const payload={checkedAt:'2026-11-03T10:30:00Z',sources:info};
+  const first=context.saveSnapshot_(payload);
+  assert.equal(first.ok,true);
+  assert.equal(first.created,0);
+  assert.equal(first.mergedDuplicates,2);
+  assert.equal(first.currentRows,1);
+  assert.equal(games.getLastRow(),2);
+  assert.equal(games.rows[1][0],master[0]);
+  assert.equal(games.rows[1][5],'ANO');
+  assert.equal(games.rows[1][6],'ANO');
+  assert.equal(games.rows[1][7],'ANO');
+  assert.equal(games.rows[1][8],'ANO');
+  assert.equal(games.rows[1][11],10);
+  assert.match(games.rows[1][12],/sr:match:74250436/);
+  assert.equal(sheets['Archiv duplicit'].getLastRow(),6);
+
+  payload.checkedAt='2026-11-03T10:45:00Z';
+  const second=context.saveSnapshot_(payload);
+  assert.equal(second.created,0);
+  assert.equal(second.mergedDuplicates,0);
+  assert.equal(second.currentRows,1);
+  assert.equal(second.positiveObservations,2);
+  assert.equal(games.getLastRow(),2);
+  assert.equal(games.rows[1][11],11);
+}
+
+function testManualArchiveAliasRejectsConflictingIdsAndDates() {
+  const master=row('Australia. WNBL','Townsville Fire','Perth Lynx',5,
+    'sr:match:72704662',ts,ts,2,'2026-11-03');
+  const old=row('Australia. WNBL','Townsville Fire (Women)',
+    'Perth Lynx (Women)',7,'sr:match:99999999',ts,ts,2,'2026-11-03');
+  const history=[[
+    '2026-11-03 09:05:00',master[0],3,'MANUAL MERGED FROM',...old
+  ]];
+  const archive=new FakeSheet([Array(17).fill('HEADER'),...history]);
+  const current=[master];
+  const links=context.manualArchiveLinks_({
+    getSheetByName:name=>name==='Archiv duplicit'?archive:null
+  },current);
+  const key='1xBit|2026-11-03|australia wnbl|townsville fire women|perth lynx women';
+  assert.equal(links.byIncoming.get(key),0);
+  // The explicit index is only accepted when incoming IDs agree.
+  const incomingId='sr:match:99999999', masterId=context.eventId_(master[12]);
+  assert.notEqual(incomingId,masterId);
+  assert.equal(context.manualArchiveLinks_({
+    getSheetByName:()=>archive
+  },[row('Australia. WNBL','Townsville Fire','Perth Lynx',5,
+      'sr:match:72704662',ts,ts,2,'2026-11-04')]
+  ).byIncoming.size,0);
+}
+
 testMultipleAliasesMergeAndAudit();
 testKnownIdOverridesNameDifferenceButNotGender();
 testConflictAndCategoriesRemainSeparateAndFlagged();
@@ -365,4 +466,6 @@ runMockIngestion();
 testTownsvillePerthThreeProvidersMerge();
 testRapidRepeatEventIdentityAcrossPolls();
 testRejectedLeagueAuditAcrossRunsAndSources();
+testManualArchiveAliasesPreventRespawnAndReplayChains();
+testManualArchiveAliasRejectsConflictingIdsAndDates();
 console.log('Historical duplicate detection, full mock ingest, audit and conflict tests passed');
