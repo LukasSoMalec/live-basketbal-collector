@@ -159,6 +159,23 @@ function eventId_(text) {
   return m ? 'sr:match:' + m[1] : '';
 }
 
+// BSKT CUP runs many actual basketball games. Repeated opponents on a single
+// day must not be treated as the same match merely from their names.
+function rapidRepeatLeague_(name) {
+  return /\bbskt\s+cup\b/i.test(String(name || ''));
+}
+
+function footballOpaqueId_(text) {
+  const value = String(text || '').trim();
+  if (!/^sr:match:[a-zA-Z0-9|_-]{6,120}$/.test(value)) return '';
+  return /^sr:match:\d+$/.test(value) ? '' : value;
+}
+
+function rowFootballOpaqueId_(notes) {
+  const match = String(notes || '').match(/football:event:(sr:match:[a-zA-Z0-9|_-]{6,120})/);
+  return match ? match[1] : '';
+}
+
 function matchDateKey_(value) {
   // getValues() returns Date objects for date-formatted Sheets cells, even
   // when the API originally wrote an ISO string such as '2026-11-02'.
@@ -180,6 +197,12 @@ function sameHistoricalFixture_(a, b) {
   if (matchDateKey_(a[1]) !== matchDateKey_(b[1])) return false;
   const aId = eventId_(a[12]), bId = eventId_(b[12]);
   if (aId && bId && aId !== bId) return false;
+  if (rapidRepeatLeague_(a[2]) || rapidRepeatLeague_(b[2])) {
+    const aOpaque = rowFootballOpaqueId_(a[12]);
+    const bOpaque = rowFootballOpaqueId_(b[12]);
+    return Boolean((aId && bId && aId === bId) ||
+      (aOpaque && bOpaque && aOpaque === bOpaque));
+  }
   const aClass = fixtureClass_(a[2], a[3], a[4]);
   if (aClass !== fixtureClass_(b[2], b[3], b[4])) return false;
   if (aId && bId && aId === bId) return true;
@@ -205,6 +228,7 @@ function joinHistoricalNotes_(notes) {
 }
 
 function possibleHistoricalDuplicate_(a, b) {
+  if (rapidRepeatLeague_(a[2]) || rapidRepeatLeague_(b[2])) return false;
   if (matchDateKey_(a[1]) !== matchDateKey_(b[1])) return false;
   if (fixtureClass_(a[2], a[3], a[4]) !== fixtureClass_(b[2], b[3], b[4]))
     return false;
@@ -380,10 +404,13 @@ function saveSnapshot_(body) {
   const originalRows = lastRow > 1 ? gamesSheet.getRange(2, 1, lastRow - 1, 13).getValues() : [];
   const rows = originalRows.map(r => r.slice());
   const idIndex = new Map();
+  const footballIndex = new Map();
   const nameIndex = new Map();
   rows.forEach((r, index) => {
     const id = eventId_(r[12]);
     if (id) idIndex.set(id, index);
+    const footballId = rowFootballOpaqueId_(r[12]);
+    if (footballId) footballIndex.set(footballId, index);
     const key = exactKey_(r[1], r[3], r[4]);
     if (!nameIndex.has(key)) nameIndex.set(key, []);
     nameIndex.get(key).push(index);
@@ -407,19 +434,25 @@ function saveSnapshot_(body) {
     for (const m of info.matches) {
       if (!m || !m.home || !m.away || !/^\d{4}-\d{2}-\d{2}$/.test(m.date)) continue;
       const srid = eventId_(m.eventId);
+      const footballId = source === 'Football.com' ? footballOpaqueId_(m.eventId) : '';
+      const rapidRepeat = rapidRepeatLeague_(m.competition);
+      // Repeated same-day BSKT CUP fixtures require their unique event ID.
+      if (rapidRepeat && !srid && !footballId) continue;
       const nameKey = exactKey_(m.date, m.home, m.away);
       let ix = srid && idIndex.has(srid) ? idIndex.get(srid) : -1;
-      if (ix === -1) {
-        // Handles AS Papagou = Papagou, Panionios BC Atény = Panionios Athens,
-        // and old duplicate rows. A conflicting existing SportRadar ID blocks
-        // any automatic merge; same-date and league context are required.
+      if (ix === -1 && footballId && footballIndex.has(footballId))
+        ix = footballIndex.get(footballId);
+      if (ix === -1 && !rapidRepeat) {
+        // Never use approximate names alone to pair two BSKT CUP games.
         ix = chooseMatch_(rows, m.date, m.home, m.away, m.competition, srid);
       }
       if (ix === -1) {
-        const key = [m.date, norm_(m.competition), normTeam_(m.home), normTeam_(m.away)].join('|');
+        const key = [m.date, norm_(m.competition), normTeam_(m.home), normTeam_(m.away),
+          footballId ? 'football=' + encodeURIComponent(footballId) : ''].filter(Boolean).join('|');
+        const notes = [srid, footballId ? 'football:event:' + footballId : '',
+          m.state ? source + ': ' + m.state : ''].filter(Boolean).join('; ');
         const initial = [key, m.date, m.competition || '', m.home, m.away,
-          'NEOVĚŘENO', 'NEOVĚŘENO', 'NEOVĚŘENO', 'NEOVĚŘENO', stamp, stamp, 0,
-          (srid ? srid : '') + (m.state ? '; ' + source + ': ' + m.state : '')];
+          'NEOVĚŘENO', 'NEOVĚŘENO', 'NEOVĚŘENO', 'NEOVĚŘENO', stamp, stamp, 0, notes];
         ix = rows.length;
         rows.push(initial);
         if (!nameIndex.has(nameKey)) nameIndex.set(nameKey, []);
@@ -430,6 +463,12 @@ function saveSnapshot_(body) {
         const old = eventId_(rows[ix][12]);
         if (!old) rows[ix][12] = (rows[ix][12] ? rows[ix][12] + '; ' : '') + srid;
         idIndex.set(srid, ix);
+      }
+      if (footballId) {
+        if (!rowFootballOpaqueId_(rows[ix][12]))
+          rows[ix][12] = (rows[ix][12] ? rows[ix][12] + '; ' : '') +
+            'football:event:' + footballId;
+        footballIndex.set(footballId, ix);
       }
       rows[ix][COL_BY_SOURCE[source]] = 'ANO';
       if (!seenThisPoll.get(source).has(ix)) {
