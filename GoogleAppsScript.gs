@@ -63,7 +63,8 @@ function normTeam_(text) {
 function fixtureClass_(league, home, away) {
   const label = norm_([league, home, away].join(' '));
   const age = label.match(/\bu(?:1[3-9]|2[0-3])\b/)?.[0] || 'adult';
-  const gender = /\b(women|woman|zene|zeny|w|wncaa)\b/.test(label)
+  // WNBL is intrinsically a women's league even when team names omit (Women).
+  const gender = /\b(wnbl|women|woman|zene|zeny|w|wncaa)\b/.test(label)
     ? 'women' : /\b(men|muzi)\b/.test(label) ? 'men' : 'unspecified';
   return age + '|' + gender;
 }
@@ -103,6 +104,15 @@ function normLeague_(text) {
     .replace(/\bzene\b/g, 'women');
 }
 
+// Provider-specific short name: in Australian WNBL "Perth (w)" refers to
+// Perth Lynx. Never apply this to men's NBL or unrelated regional leagues.
+function fixtureTeamAlias_(team, competition) {
+  if (/\bwnbl\b/.test(normLeague_(competition)) &&
+      /^perth(?:\s+(?:w|women))?$/.test(normTeam_(team)))
+    return 'Perth Lynx';
+  return team;
+}
+
 function sameFixture_(date, home, away, competition, row, incomingId) {
   if (matchDateKey_(date) !== matchDateKey_(row[1])) return false;
   const existingId = eventId_(row[12]);
@@ -112,10 +122,17 @@ function sameFixture_(date, home, away, competition, row, incomingId) {
   if (incomingClass !== oldClass) return false;
 
   const ignoreWomen = incomingClass.endsWith('|women');
-  const forward = sameTeam_(home, row[3], ignoreWomen) &&
-    sameTeam_(away, row[4], ignoreWomen);
-  const reverse = sameTeam_(home, row[4], ignoreWomen) &&
-    sameTeam_(away, row[3], ignoreWomen);
+  // An alias must be validated by both competition labels, not just one.
+  const bothWnbl = /\bwnbl\b/.test(normLeague_(competition)) &&
+    /\bwnbl\b/.test(normLeague_(row[2]));
+  const h = bothWnbl ? fixtureTeamAlias_(home, competition) : home;
+  const a = bothWnbl ? fixtureTeamAlias_(away, competition) : away;
+  const rh = bothWnbl ? fixtureTeamAlias_(row[3], row[2]) : row[3];
+  const ra = bothWnbl ? fixtureTeamAlias_(row[4], row[2]) : row[4];
+  const forward = sameTeam_(h, rh, ignoreWomen) &&
+    sameTeam_(a, ra, ignoreWomen);
+  const reverse = sameTeam_(h, ra, ignoreWomen) &&
+    sameTeam_(a, rh, ignoreWomen);
   if (!forward && !reverse) return false;
 
   const leagueA = normLeague_(competition);
@@ -124,10 +141,10 @@ function sameFixture_(date, home, away, competition, row, incomingId) {
 
   // Trust two equal, distinctive team identities on the same date, even if
   // providers translate competition names or reverse team order.
-  const hCore = teamCore_(home, ignoreWomen);
-  const aCore = teamCore_(away, ignoreWomen);
-  const rHCore = teamCore_(row[3], ignoreWomen);
-  const rACore = teamCore_(row[4], ignoreWomen);
+  const hCore = teamCore_(h, ignoreWomen);
+  const aCore = teamCore_(a, ignoreWomen);
+  const rHCore = teamCore_(rh, ignoreWomen);
+  const rACore = teamCore_(ra, ignoreWomen);
   const identicalPairs = forward && hCore === rHCore && aCore === rACore;
   const reversePairs = reverse && hCore === rACore && aCore === rHCore;
   if (identicalPairs || reversePairs) return true;
