@@ -35,6 +35,16 @@ Při čistém integračním testu 2026-11-02 v 19:19 se podařilo spojit `AS Pap
 
 **Nutný jednorázový krok: tuto verzi z GitHubu znovu nasadit v Google Apps Scriptu.** Přepsat obsah `Code.gs`, pak `Nasadit → Spravovat nasazení → Upravit (tužka) → Nová verze → Nasadit`. GitHub workflow samo o sobě neupravuje nasazenou webovou aplikaci. Po aktualizaci už se opravy budou provádět při každém běhu automaticky; tabulku není třeba čistit ani znovu zakládat.
 
+## Football.com – skutečná BSKT CUP a opakovaná utkání
+
+Diagnostika 2026-11-03 potvrdila, že endpoint `configurableLiveOrPrematchEvents` obsahoval dvě skutečné soutěžní události WNBL/NCAA a dvě další události BSKT CUP (Alligators–Lions a Athletic Basket–Riverport). BSKT CUP je reálná basketbalová soutěž 5×5, nikoli eBasket. Starý filtr ji chybně vyřazoval.
+
+**Bezpečné zapnutí ve dvou krocích** (kvůli rychlé frekvenci opakovaných duelů stejných týmů):
+1. Nahrát aktuální `GoogleAppsScript.gs` do stejné Apps Script webové aplikace a znovu nasadit **novou verzi stávajícího deploymentu**. Nový matcher uchovává neprůhledná ID Football.com pod `football:event:sr:match:...`, nevytváří falešná numerická SportRadar ID a nikdy neslučuje dvě BSKT CUP utkání jen podle data a týmů. Doporučuje se aktualizovat rovněž volitelný `ManualMerge.gs` (pořád stačí jeho uložení bez webového nasazení).
+2. Teprve po potvrzení nasazení nastavit v GitHub workflow v `jobs.collect.env` `ENABLE_BSKT_CUP: '1'` (nebo přes GitHub Action env); aktuálně je tato funkce **záměrně vypnutá**, aby stará nasazená verze Apps Scriptu nespojovala různé rychlé zápasy.
+
+Po aktivaci se BSKT CUP zapojí do běžného čtvrthodinového sběru z externího cron-job.org; GitHub `schedule` se nemění a není potřeba upravovat externí plánovač. Kontroly existují v `tests/test_parsers.py` a `tests/test_apps_script_dedupe.cjs`.
+
 ## Lokální test
 
 ```bash
