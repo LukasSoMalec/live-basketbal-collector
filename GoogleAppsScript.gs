@@ -269,7 +269,7 @@ function chooseHistoricalMaster_(rows, members) {
   })[0];
 }
 
-function planHistoricalDeduplication_(rows, stamp) {
+function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map()) {
   // Group only within the same match day and youth/women category.
   const buckets = new Map();
   rows.forEach((r, ix) => {
@@ -309,6 +309,36 @@ function planHistoricalDeduplication_(rows, stamp) {
     }
   }
 
+  // Honor historic MANUAL MERGED FROM decisions, even across different
+  // provider league names, gender labels and other heuristic buckets.
+  const pinnedMaster = new Map();
+  for (const [from, desiredMaster] of explicitLinks.entries()) {
+    if (from === desiredMaster || !rows[from] || !rows[desiredMaster]) continue;
+    if (matchDateKey_(rows[from][1]) !== matchDateKey_(rows[desiredMaster][1]))
+      continue;
+    const oldId = eventId_(rows[from][12]);
+    const masterId = eventId_(rows[desiredMaster][12]);
+    if (oldId && masterId && oldId !== masterId) continue;
+    const oldOpaque = rowFootballOpaqueId_(rows[from][12]);
+    const masterOpaque = rowFootballOpaqueId_(rows[desiredMaster][12]);
+    if (oldOpaque && masterOpaque && oldOpaque !== masterOpaque) continue;
+    if (rapidRepeatLeague_(rows[from][2]) ||
+        rapidRepeatLeague_(rows[desiredMaster][2])) continue;
+    const a = groups.find(g => g.includes(from));
+    const b = groups.find(g => g.includes(desiredMaster));
+    if (!a || !b || a === b) {
+      if (a && a === b) pinnedMaster.set(a, desiredMaster);
+      continue;
+    }
+    const combined = [...a, ...b];
+    const ids = new Set(combined.map(ix => eventId_(rows[ix][12])).filter(Boolean));
+    const opaque = new Set(combined.map(ix => rowFootballOpaqueId_(rows[ix][12])).filter(Boolean));
+    if (ids.size > 1 || opaque.size > 1) continue;
+    b.push(...a);
+    groups.splice(groups.indexOf(a), 1);
+    pinnedMaster.set(b, desiredMaster);
+  }
+
   const deleteIndices = [];
   const modified = new Set();
   const archive = [];
@@ -321,7 +351,9 @@ function planHistoricalDeduplication_(rows, stamp) {
       group.forEach(ix => flagged.add(ix));
       continue;
     }
-    const master = chooseHistoricalMaster_(rows, group);
+    const preferred = pinnedMaster.get(group);
+    const master = Number.isInteger(preferred) && group.includes(preferred)
+      ? preferred : chooseHistoricalMaster_(rows, group);
     const original = group.map(ix => rows[ix].slice());
     for (let i = 0; i < group.length; i++) {
       const ix = group[i];
@@ -486,6 +518,76 @@ function updateRejectedLeagues_(ss, sourceMap, stamp) {
   return {total, distinct};
 }
 
+// Manually merged aliases are already preserved in Archiv duplicit.
+// Read them on EVERY ingest so deleted variants never respawn, including
+// manual merges made before this feature was added. Resolve alias chains.
+function manualArchiveLinks_(ss, rows) {
+  const empty = {byIncoming: new Map(), byExisting: new Map()};
+  const archive = ss.getSheetByName('Archiv duplicit');
+  if (!archive || archive.getLastRow() < 2) return empty;
+  const history = archive.getRange(2, 1, archive.getLastRow() - 1, 17).getValues();
+  const forwards = new Map();
+  const records = [];
+  const conflict = new Set();
+  const current = new Map();
+  rows.forEach((row, ix) => {
+    const key = String(row[0] || '');
+    if (!key) return;
+    if (current.has(key)) current.set(key, -1); // Duplicate key = ambiguous.
+    else current.set(key, ix);
+  });
+
+  for (const h of history) {
+    if (String(h[3] || '') !== 'MANUAL MERGED FROM') continue;
+    const targetKey = String(h[1] || '');
+    const oldKey = String(h[4] || '');
+    const date = matchDateKey_(h[5]);
+    if (!targetKey || !oldKey || !date || !h[6] || !h[7] || !h[8] ||
+        rapidRepeatLeague_(h[6])) continue;
+    if (forwards.has(oldKey) && forwards.get(oldKey) !== targetKey)
+      conflict.add(oldKey);
+    else forwards.set(oldKey, targetKey);
+    records.push({
+      key: oldKey,
+      fingerprint: [date, norm_(h[6]), normTeam_(h[7]), normTeam_(h[8])].join('|'),
+      date,
+      sources: SOURCES.filter((_, i) => h[9 + i] === 'ANO')
+    });
+  }
+
+  function resolve(key) {
+    const visited = new Set();
+    let k = key;
+    while (forwards.has(k)) {
+      if (conflict.has(k) || visited.has(k)) return -1;
+      visited.add(k);
+      const next = forwards.get(k);
+      if (!next || next === k) return -1;
+      k = next;
+    }
+    const ix = current.get(k);
+    return Number.isInteger(ix) && ix >= 0 ? ix : -1;
+  }
+
+  const byIncoming = new Map();
+  const byExisting = new Map();
+  for (const entry of records) {
+    const target = resolve(entry.key);
+    if (target < 0 || matchDateKey_(rows[target][1]) !== entry.date) continue;
+    const from = current.get(entry.key);
+    if (Number.isInteger(from) && from >= 0 && from !== target)
+      byExisting.set(from, target);
+    for (const source of entry.sources) {
+      const key = source + '|' + entry.fingerprint;
+      if (byIncoming.has(key) && byIncoming.get(key) !== target)
+        byIncoming.set(key, -1); // Never choose between two manual destinations.
+      else if (!byIncoming.has(key))
+        byIncoming.set(key, target);
+    }
+  }
+  return {byIncoming, byExisting};
+}
+
 function saveSnapshot_(body) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const gamesSheet = ss.getSheetByName('Zápasy');
@@ -499,6 +601,7 @@ function saveSnapshot_(body) {
   const lastRow = gamesSheet.getLastRow();
   const originalRows = lastRow > 1 ? gamesSheet.getRange(2, 1, lastRow - 1, 13).getValues() : [];
   const rows = originalRows.map(r => r.slice());
+  const manualLinks = manualArchiveLinks_(ss, rows);
   const idIndex = new Map();
   const footballIndex = new Map();
   const nameIndex = new Map();
@@ -535,7 +638,22 @@ function saveSnapshot_(body) {
       // Repeated same-day BSKT CUP fixtures require their unique event ID.
       if (rapidRepeat && !srid && !footballId) continue;
       const nameKey = exactKey_(m.date, m.home, m.away);
-      let ix = srid && idIndex.has(srid) ? idIndex.get(srid) : -1;
+      let ix = -1;
+      if (!rapidRepeat) {
+        const fingerprint = [m.date, norm_(m.competition),
+          normTeam_(m.home), normTeam_(m.away)].join('|');
+        const manualIx = manualLinks.byIncoming.get(source + '|' + fingerprint);
+        if (Number.isInteger(manualIx) && manualIx >= 0) {
+          const existingId = eventId_(rows[manualIx][12]);
+          const oldFootball = rowFootballOpaqueId_(rows[manualIx][12]);
+          // Explicit manual identity can supersede a re-created old row,
+          // but must NEVER override conflicting independent match IDs.
+          if ((!srid || !existingId || srid === existingId) &&
+              (!footballId || !oldFootball || footballId === oldFootball))
+            ix = manualIx;
+        }
+      }
+      if (ix === -1 && srid && idIndex.has(srid)) ix = idIndex.get(srid);
       if (ix === -1 && footballId && footballIndex.has(footballId))
         ix = footballIndex.get(footballId);
       if (ix === -1 && !rapidRepeat) {
@@ -597,7 +715,7 @@ function saveSnapshot_(body) {
 
   // Retrospectively compare all stored rows, including finished games.
   // Keep the archive BEFORE removing any duplicate row from the live sheet.
-  const cleanup = planHistoricalDeduplication_(rows, stamp);
+  const cleanup = planHistoricalDeduplication_(rows, stamp, manualLinks.byExisting);
   for (const ix of cleanup.modified) touched.add(ix);
   const removedIndices = new Set(cleanup.deleteIndices);
   // Distinct source/fixture observations after merging; the same poll must
