@@ -282,6 +282,81 @@ function testRapidRepeatEventIdentityAcrossPolls() {
   assert.equal(games.getLastRow(),3);
 }
 
+function testRejectedLeagueAuditAcrossRunsAndSources() {
+  const games=new FakeSheet([Array(13).fill('HEADER')]);
+  const checks=new FakeSheet([]);
+  const sourceSheet=new FakeSheet([Array(6).fill('HEADER')]);
+  const sheets={Zápasy:games,Kontroly:checks,Zdroje:sourceSheet};
+  context.SpreadsheetApp={openById:()=>({
+    getSheetByName:name=>sheets[name]||null,
+    insertSheet:name=>(sheets[name]=new FakeSheet())
+  })};
+  const reject=(competition,reason,count,example)=>({
+    competition,reason,count,example
+  });
+  const sources=[
+    {source:'SynotTip',status:'ÚSPĚCH',complete:false,matches:[],
+     rejectedCompetitions:[]},
+    {source:'Fonbet',status:'ÚSPĚCH',complete:false,matches:[],
+     rejectedCompetitions:[
+       reject('FrostBall','Nežádoucí soutěž',2,'Lynx FB – Archers FB'),
+       reject('Premier League A','Nežádoucí soutěž',1,'Spiders – Tigers')]},
+    {source:'1xBit',status:'ÚSPĚCH',complete:false,matches:[],
+     rejectedCompetitions:[
+       reject('FrostBall','Nežádoucí soutěž',3,'Bisons FB – Arrows FB'),
+       reject('frostball','Nežádoucí soutěž',1,'Lynx FB – Archers FB')]},
+    {source:'Football.com',status:'ÚSPĚCH',complete:false,matches:[],
+     rejectedCompetitions:[reject('BSKT CUP','Nežádoucí soutěž',2,
+       'Alligators – Lions')]}
+  ];
+  const body={checkedAt:'2026-11-03T09:00:00.000Z',sources};
+  const first=context.saveSnapshot_(body);
+  assert.equal(first.rejectedGames,9);
+  assert.equal(first.rejectedLeagues,4);
+  const audit=sheets['Vyřazené soutěže'];
+  assert.equal(audit.getLastRow(),5);
+  assert.equal(audit.rows[0][0],'Zdroj');
+  const fonbetFrost=audit.rows.find(r=>r[0]==='Fonbet' && r[1]==='FrostBall');
+  assert.equal(fonbetFrost[5],1);
+  assert.equal(fonbetFrost[6],2);
+  assert.equal(fonbetFrost[7],2);
+  assert.match(fonbetFrost[8],/Lynx FB/);
+  const bitFrost=audit.rows.find(r=>r[0]==='1xBit' && r[1]==='FrostBall');
+  assert.equal(bitFrost[5],1);
+  assert.equal(bitFrost[6],4);
+  assert.equal(bitFrost[7],4);
+
+  // A retry with identical checkedAt must not add a new "control".
+  const repeat=context.saveSnapshot_(body);
+  assert.equal(repeat.rejectedGames,9);
+  assert.equal(audit.getLastRow(),5);
+  assert.equal(fonbetFrost[5],1);
+  assert.equal(fonbetFrost[6],2);
+  assert.equal(bitFrost[6],4);
+
+  // Later run accumulates occurrences, but not new duplicate rows.
+  body.checkedAt='2026-11-03T09:15:00.000Z';
+  sources[1].rejectedCompetitions=[
+    reject('FrostBall','Nežádoucí soutěž',1,'Lynx FB – Archers FB')];
+  sources[2].rejectedCompetitions=[
+    reject('FrostBall','Nežádoucí soutěž',2,'Bisons FB – Arrows FB')];
+  sources[3].status='NEDOSTUPNÉ';
+  sources[3].rejectedCompetitions=[
+    reject('Should Ignore','Nežádoucí soutěž',3,'X – Y')];
+  const second=context.saveSnapshot_(body);
+  assert.equal(second.rejectedGames,3);
+  assert.equal(second.rejectedLeagues,2);
+  assert.equal(audit.getLastRow(),5);
+  assert.equal(fonbetFrost[5],2);
+  assert.equal(fonbetFrost[6],3);
+  assert.equal(fonbetFrost[7],1);
+  assert.equal(bitFrost[5],2);
+  assert.equal(bitFrost[6],6);
+  assert.equal(bitFrost[7],2);
+  assert.equal(audit.rows.some(r=>r[1]==='Should Ignore'),false);
+  assert.match(checks.rows[checks.rows.length-1][9],/3 vyřazených LIVE/);
+}
+
 testMultipleAliasesMergeAndAudit();
 testKnownIdOverridesNameDifferenceButNotGender();
 testConflictAndCategoriesRemainSeparateAndFlagged();
@@ -289,4 +364,5 @@ testMultipleIdsAcrossThirdVariantNotTransitive();
 runMockIngestion();
 testTownsvillePerthThreeProvidersMerge();
 testRapidRepeatEventIdentityAcrossPolls();
+testRejectedLeagueAuditAcrossRunsAndSources();
 console.log('Historical duplicate detection, full mock ingest, audit and conflict tests passed');
