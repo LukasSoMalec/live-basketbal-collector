@@ -407,6 +407,81 @@ function deleteHistoricalDuplicateRows_(sheet, indices) {
   flush();
 }
 
+// Read-only audit of the LIVE fixtures rejected by Python filters.
+// One record per source + normalized league + reason (no duplicate rows on each poll).
+function updateRejectedLeagues_(ss, sourceMap, stamp) {
+  let sheet = ss.getSheetByName('Vyřazené soutěže');
+  if (!sheet) sheet = ss.insertSheet('Vyřazené soutěže');
+  const headers = [
+    'Zdroj', 'Soutěž', 'Důvod', 'Poprvé', 'Naposledy',
+    'Kontrol s výskytem', 'Součet výskytů', 'V poslední kontrole'
+  ];
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+  }
+  const lastRow = sheet.getLastRow();
+  const rows = lastRow > 1
+    ? sheet.getRange(2, 1, lastRow - 1, headers.length).getValues() : [];
+  const index = new Map();
+  const keyOf = (source, competition, reason) =>
+    [source, norm_(competition), norm_(reason)].join('|');
+  rows.forEach((r, i) => {
+    if (r[0] && r[1] && r[2])
+      index.set(keyOf(String(r[0]), String(r[1]), String(r[2])), i);
+  });
+  const safeText = text => {
+    const raw = String(text || '').trim().slice(0, 160);
+    // Don't interpret externally supplied league names as Sheets formulas.
+    return /^[=+\-@\t\r]/.test(raw) ? "'" + raw : raw;
+  };
+  let total = 0;
+  let distinct = 0;
+  for (const source of SOURCES) {
+    const info = sourceMap.get(source);
+    if (!info || !['ÚSPĚCH', 'ČÁSTEČNĚ'].includes(info.status)) continue;
+    const filtered = info.rejectedCompetitions;
+    if (!Array.isArray(filtered)) continue;
+    // Merge repeated names/reasons within one API snapshot, even if the
+    // producer sends duplicate grouped objects.
+    const perPoll = new Map();
+    for (const item of filtered.slice(0, 250)) {
+      if (!item || typeof item !== 'object') continue;
+      const competition = safeText(item.competition);
+      const reason = safeText(item.reason);
+      const count = Number(item.count);
+      if (!competition || !reason || !Number.isSafeInteger(count) ||
+          count < 1 || count > 3000) continue;
+      const key = keyOf(source, competition, reason);
+      const prev = perPoll.get(key);
+      perPoll.set(key, {competition, reason, count: (prev?.count || 0) + count});
+    }
+    for (const [key, entry] of perPoll.entries()) {
+      total += entry.count;
+      distinct++;
+      let ix = index.get(key);
+      if (ix === undefined) {
+        ix = rows.length;
+        index.set(key, ix);
+        rows.push([source, entry.competition, entry.reason, stamp, stamp,
+          1, entry.count, entry.count]);
+        continue;
+      }
+      const row = rows[ix];
+      const samePoll = String(row[4]) === stamp;
+      const previousLastCount = Number(row[7]) || 0;
+      row[4] = stamp;
+      if (!samePoll) row[5] = (Number(row[5]) || 0) + 1;
+      row[6] = (Number(row[6]) || 0) +
+        (samePoll ? entry.count - previousLastCount : entry.count);
+      row[7] = entry.count;
+    }
+  }
+  if (rows.length)
+    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  return {total, distinct};
+}
+
 function saveSnapshot_(body) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const gamesSheet = ss.getSheetByName('Zápasy');
@@ -568,9 +643,10 @@ function saveSnapshot_(body) {
     return {status, count: status === 'NEDOSTUPNÉ' ? '' : (entry.matches || []).length};
   }
   const counts = SOURCES.map(summaryStatus);
+  const rejectionSummary = updateRejectedLeagues_(ss, sourceMap, stamp);
   checksSheet.appendRow([stamp, counts[0].status, counts[0].count, counts[1].status, counts[1].count,
     counts[2].status, counts[2].count, counts[3].status, counts[3].count,
-    `${created - cleanup.deleteIndices.filter(ix => ix >= oldCount).length} nových zápasů, ${uniqueObservations} dostupností; ${cleanup.merged} sloučených duplicit, ${cleanup.reviewCandidates} k prověření; zdroje s neověřenou úplností nejsou použity k označení NE`]);
+    `${created - cleanup.deleteIndices.filter(ix => ix >= oldCount).length} nových zápasů, ${uniqueObservations} dostupností; ${cleanup.merged} sloučených duplicit, ${cleanup.reviewCandidates} k prověření; ${rejectionSummary.total} vyřazených LIVE ve ${rejectionSummary.distinct} soutěžích/zdrojích; zdroje s neověřenou úplností nejsou použity k označení NE`]);
   srcSheet.getRange(2, 3, 4, 4).setValues(SOURCES.map((name, i) => {
     const s = sourceMap.get(name) || {};
     return [stamp, counts[i].status, counts[i].count, String(s.error || '').slice(0, 450)];
@@ -578,5 +654,6 @@ function saveSnapshot_(body) {
   return {ok: true, created: created - cleanup.deleteIndices.filter(ix => ix >= oldCount).length,
     currentRows: rows.length - cleanup.merged, mergedDuplicates: cleanup.merged,
     reviewCandidates: cleanup.reviewCandidates, positiveObservations: uniqueObservations,
+    rejectedGames: rejectionSummary.total, rejectedLeagues: rejectionSummary.distinct,
     sources: SOURCES.map((name, i) => ({name, ...counts[i]}))};
 }
