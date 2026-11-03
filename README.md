@@ -6,9 +6,7 @@ Sběr veřejné LIVE basketbalové nabídky ze SynotTipu, Football.com, Fonbetu 
 
 ## Plánované spouštění
 
-GitHub Actions workflow `.github/workflows/live-basketball.yml` je nastaven na **každých 20 minut** (UTC `:00`, `:20`, `:40`; stejné minuty platí v ČR). GitHub může plánované spuštění opozdit.
-
-**Automatické spouštění je aktivní.** První ostrý test 2026-11-02 prošel: SynotTip 16 LIVE zápasů a 8 nových řádků zapsaných do Google Sheets. GitHub Actions může běhy opozdit. U 72 spuštění denně může být spotřeba minut v soukromém repozitáři významná (a případně placená). Pozastavení: GitHub → Actions → LIVE basketbal - 4 sazkovky → menu `...` → Disable workflow. Bez nového workflow už nebudou běžet kontroly.
+Plánovač **cron-job.org** spouští každých **15 minut** (minuty :00, :15, :30, :45 v čase Europe/Prague) GitHub Actions přes `workflow_dispatch`. V GitHub workflow není interní `schedule` ani trvalý `push` trigger. Runner může začít se zpožděním. Spuštění ověříš na stránce GitHub Actions a na listu `Kontroly`.
 
 ## Propojení Google Sheets (jednorázově)
 
@@ -35,15 +33,15 @@ Při čistém integračním testu 2026-11-02 v 19:19 se podařilo spojit `AS Pap
 
 **Nutný jednorázový krok: tuto verzi z GitHubu znovu nasadit v Google Apps Scriptu.** Přepsat obsah `Code.gs`, pak `Nasadit → Spravovat nasazení → Upravit (tužka) → Nová verze → Nasadit`. GitHub workflow samo o sobě neupravuje nasazenou webovou aplikaci. Po aktualizaci už se opravy budou provádět při každém běhu automaticky; tabulku není třeba čistit ani znovu zakládat.
 
-## Football.com – skutečná BSKT CUP a opakovaná utkání
+## Filtrace soutěží a evidence vyřazených LIVE zápasů
 
-Diagnostika 2026-11-03 potvrdila, že endpoint `configurableLiveOrPrematchEvents` obsahoval dvě skutečné soutěžní události WNBL/NCAA a dvě další události BSKT CUP (Alligators–Lions a Athletic Basket–Riverport). BSKT CUP je reálná basketbalová soutěž 5×5, nikoli eBasket. Starý filtr ji chybně vyřazoval.
+Sledujeme **klasické soutěžní basketbalové zápasy**, ne bookmaker-only minisoutěže, virtuální hry ani eBasket. Sdílený filtr všech čtyř zdrojů vyřazuje mimo jiné `FrostBall`, samostatné `Premier League` / `Premier League A`, `IPBL`, `BSKT CUP`, `Table Basketball League` a e-sport. Konkrétní názvy jako `Israel. Premier League` **nesmí být automaticky vyřazeny** kvůli slovu Premier.
 
-**Bezpečné zapnutí ve dvou krocích** (kvůli rychlé frekvenci opakovaných duelů stejných týmů):
-1. Nahrát aktuální `GoogleAppsScript.gs` do stejné Apps Script webové aplikace a znovu nasadit **novou verzi stávajícího deploymentu**. Nový matcher uchovává neprůhledná ID Football.com pod `football:event:sr:match:...`, nevytváří falešná numerická SportRadar ID a nikdy neslučuje dvě BSKT CUP utkání jen podle data a týmů. Doporučuje se aktualizovat rovněž volitelný `ManualMerge.gs` (pořád stačí jeho uložení bez webového nasazení).
-2. Teprve po potvrzení nasazení nastavit v GitHub workflow v `jobs.collect.env` `ENABLE_BSKT_CUP: '1'` (nebo přes GitHub Action env); aktuálně je tato funkce **záměrně vypnutá**, aby stará nasazená verze Apps Scriptu nespojovala různé rychlé zápasy.
+Parsery ukládají ke každému funkčnímu LIVE zdroji pole `rejectedCompetitions` (zdroj je součástí mateřského objektu; položka obsahuje `competition`, `reason`, `count`, `example`). Jde o **počty různých LIVE událostí v jednom sběru**, deduplikované přes sportovní ID, případně dvojici týmů. Nepočítají se nespuštěné zápasy, nedostupné API ani neplatná JSON schémata.
 
-Po aktivaci se BSKT CUP zapojí do běžného čtvrthodinového sběru z externího cron-job.org; GitHub `schedule` se nemění a není potřeba upravovat externí plánovač. Kontroly existují v `tests/test_parsers.py` a `tests/test_apps_script_dedupe.cjs`.
+Po aktualizaci **GoogleAppsScript.gs** a **novém nasazení stávající Apps Script webové aplikace** se automaticky vytvoří list `Vyřazené soutěže`. Na každou kombinaci zdroj + název soutěže + důvod existuje jeden řádek s prvním a posledním výskytem, počtem kontrol s výskytem, součtem výskytů v kontrolách, počtem v poslední kontrole a příkladem utkání. Součet výskytů **není počet jedinečných utkání za celou historii**, protože stejný zápas může probíhat více kontrolami.
+
+Soubor `ManualMerge.gs` je volitelný a nemění zpracování tohoto auditu; tento list je **jen evidence, ne editovatelný whitelist nebo blacklist**. Změna pravidel se zatím provádí v `collector.py`. Staré údaje se zpětně neodhadují.
 
 ## Lokální test
 
