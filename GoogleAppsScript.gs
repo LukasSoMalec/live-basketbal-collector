@@ -151,10 +151,13 @@ function sameFixture_(date, home, away, competition, row, incomingId) {
   return leagueA === leagueB;
 }
 
-function chooseMatch_(rows, date, home, away, competition, incomingId) {
+function chooseMatch_(rows, date, home, away, competition, incomingId,
+                      aliases = null, source = '') {
   const candidates = [];
   for (let ix = 0; ix < rows.length; ix++) {
-    if (sameFixture_(date, home, away, competition, rows[ix], incomingId))
+    if (sameFixture_(date, home, away, competition, rows[ix], incomingId) ||
+        sameLearnedAliasFixture_(aliases, source, date, home, away,
+          competition, rows[ix], incomingId))
       candidates.push(ix);
   }
   if (!candidates.length) return -1;
@@ -522,7 +525,7 @@ function updateRejectedLeagues_(ss, sourceMap, stamp) {
 // Read them on EVERY ingest so deleted variants never respawn, including
 // manual merges made before this feature was added. Resolve alias chains.
 function manualArchiveLinks_(ss, rows) {
-  const empty = {byIncoming: new Map(), byExisting: new Map()};
+  const empty = {byIncoming: new Map(), byExisting: new Map(), teamAliases: []};
   const archive = ss.getSheetByName('Archiv duplicit');
   if (!archive || archive.getLastRow() < 2) return empty;
   const history = archive.getRange(2, 1, archive.getLastRow() - 1, 17).getValues();
@@ -550,7 +553,7 @@ function manualArchiveLinks_(ss, rows) {
     records.push({
       key: oldKey,
       fingerprint: [date, norm_(h[6]), normTeam_(h[7]), normTeam_(h[8])].join('|'),
-      date,
+      date, league: String(h[6]), home: String(h[7]), away: String(h[8]),
       sources: SOURCES.filter((_, i) => h[9 + i] === 'ANO')
     });
   }
@@ -571,12 +574,27 @@ function manualArchiveLinks_(ss, rows) {
 
   const byIncoming = new Map();
   const byExisting = new Map();
+  const teamAliases = [];
   for (const entry of records) {
     const target = resolve(entry.key);
     if (target < 0 || matchDateKey_(rows[target][1]) !== entry.date) continue;
     const from = current.get(entry.key);
     if (Number.isInteger(from) && from >= 0 && from !== target)
       byExisting.set(from, target);
+    // User-confirmed home/home and away/away equivalences can be
+    // reused on OTHER DATES, unlike the fixture-specific alias above.
+    const master = rows[target];
+    if (!rapidRepeatLeague_(master[2])) {
+      const category = fixtureClass_(master[2], master[3], master[4]);
+      for (const source of entry.sources) {
+        teamAliases.push({source, league: entry.league,
+          team: entry.home, canonical: String(master[3]),
+          category, scope: String(master[2]), origin: 'Ruční sloučení'});
+        teamAliases.push({source, league: entry.league,
+          team: entry.away, canonical: String(master[4]),
+          category, scope: String(master[2]), origin: 'Ruční sloučení'});
+      }
+    }
     for (const source of entry.sources) {
       const key = source + '|' + entry.fingerprint;
       if (byIncoming.has(key) && byIncoming.get(key) !== target)
@@ -585,7 +603,133 @@ function manualArchiveLinks_(ss, rows) {
         byIncoming.set(key, target);
     }
   }
-  return {byIncoming, byExisting};
+  return {byIncoming, byExisting, teamAliases};
+}
+
+// A persistent, editable team dictionary. Rows come from confirmed manual
+// merges, not fuzzy name similarity. Different bookmakers may call a club
+// by entirely different names; confirmed identities survive into future days.
+function teamAliasKey_(source, league, team, category) {
+  return [String(source), normLeague_(league), normTeam_(team),
+    String(category)].join('|');
+}
+
+function readTeamAliases_(ss, suggested) {
+  let sheet = ss.getSheetByName('Aliasy týmů');
+  if (!sheet) sheet = ss.insertSheet('Aliasy týmů');
+  const headers = ['Zdroj', 'Soutěž u zdroje', 'Název týmu u zdroje',
+    'Odpovídající tým', 'Kategorie', 'Soutěž cílového týmu',
+    'Původ', 'Aktivní'];
+  if (!sheet.getLastRow()) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+  }
+  const last = sheet.getLastRow();
+  const rows = last > 1 ? sheet.getRange(2, 1, last - 1, 8).getValues() : [];
+  const existing = new Set();
+  for (const r of rows) {
+    if (r[0] && r[1] && r[2] && r[4])
+      existing.add(teamAliasKey_(r[0], r[1], r[2], r[4]));
+  }
+  const staged = new Map();
+  const conflicts = new Set();
+  for (const suggestion of suggested) {
+    if (!SOURCES.includes(suggestion.source) ||
+        !suggestion.league || !suggestion.team || !suggestion.canonical ||
+        !suggestion.category || !suggestion.scope) continue;
+    const key = teamAliasKey_(suggestion.source, suggestion.league,
+      suggestion.team, suggestion.category);
+    if (existing.has(key)) continue;
+    const target = normTeam_(suggestion.canonical) + '|' +
+      normLeague_(suggestion.scope);
+    if (staged.has(key) && staged.get(key).target !== target) {
+      conflicts.add(key);
+    } else if (!staged.has(key)) {
+      staged.set(key, {target, value: suggestion});
+    }
+  }
+  const additions = [];
+  for (const [key, x] of staged) {
+    if (conflicts.has(key)) continue; // Ambiguous history requires review.
+    const v = x.value;
+    additions.push([v.source, v.league, v.team, v.canonical,
+      v.category, v.scope, v.origin, 'ANO']);
+  }
+  if (additions.length) {
+    sheet.getRange(last + 1, 1, additions.length, 8).setValues(additions);
+    rows.push(...additions);
+  }
+
+  // Duplicate keys with conflicting targets are disabled, not overwritten.
+  const dictionary = new Map();
+  const leagueGroups = new Map();
+  for (const r of rows) {
+    if (String(r[7] || '').trim().toUpperCase() !== 'ANO') continue;
+    if (!SOURCES.includes(r[0]) || !r[1] || !r[2] || !r[3] ||
+        !r[4] || !r[5]) continue;
+    const key = teamAliasKey_(r[0], r[1], r[2], r[4]);
+    const canonical = normTeam_(r[3]);
+    const scope = normLeague_(r[5]);
+    const value = canonical + '|' + scope;
+    if (dictionary.has(key) && dictionary.get(key).value !== value)
+      dictionary.set(key, {conflict:true});
+    else if (!dictionary.has(key))
+      dictionary.set(key, {canonical, scope, value, conflict:false});
+
+    // A stored row may have been created by any sportsbook; recognize
+    // its league alias only if the canonical league is unambiguous.
+    const lk = normLeague_(r[1]);
+    if (leagueGroups.has(lk) && leagueGroups.get(lk) !== scope)
+      leagueGroups.set(lk, '');
+    else if (!leagueGroups.has(lk))
+      leagueGroups.set(lk, scope);
+  }
+  return {dictionary, leagueGroups};
+}
+
+function canonicalTeamAlias_(aliases, source, league, team, category) {
+  const v = aliases.dictionary.get(teamAliasKey_(source, league, team, category));
+  return v && !v.conflict ? v : null;
+}
+
+function sameLearnedAliasFixture_(aliases, source, date, home, away,
+                                  competition, row, incomingId) {
+  if (!aliases || !source || rapidRepeatLeague_(competition) ||
+      rapidRepeatLeague_(row[2])) return false;
+  if (matchDateKey_(date) !== matchDateKey_(row[1])) return false;
+  const oldId = eventId_(row[12]);
+  if (incomingId && oldId && incomingId !== oldId) return false;
+  const cls = fixtureClass_(competition, home, away);
+  if (cls !== fixtureClass_(row[2], row[3], row[4])) return false;
+  const left = canonicalTeamAlias_(aliases, source, competition, home, cls);
+  const right = canonicalTeamAlias_(aliases, source, competition, away, cls);
+  if (!left && !right) return false;
+  const group = (left || right).scope;
+  if ((left && left.scope !== group) || (right && right.scope !== group))
+    return false;
+  const rowLeague = normLeague_(row[2]);
+  const rowGroup = aliases.leagueGroups.has(rowLeague)
+    ? aliases.leagueGroups.get(rowLeague) : rowLeague;
+  if (!rowGroup || rowGroup !== group) return false;
+
+  function identity(team) {
+    // The display-name on the stored row is often the manual merge master
+    // (canonical name). If not, use ONLY unambiguous aliases from sources.
+    const original = normTeam_(team);
+    const matches = new Set([original]);
+    const mapped = new Set();
+    for (const bookmaker of SOURCES) {
+      const found = canonicalTeamAlias_(aliases, bookmaker, row[2], team, cls);
+      if (found && found.scope === group) mapped.add(found.canonical);
+    }
+    return mapped.size === 1 ? [...mapped][0] :
+      mapped.size > 1 ? '' : original;
+  }
+  const ah = left ? left.canonical : normTeam_(home);
+  const aa = right ? right.canonical : normTeam_(away);
+  const bh = identity(row[3]), ba = identity(row[4]);
+  if (!ah || !aa || !bh || !ba) return false;
+  return (ah === bh && aa === ba) || (ah === ba && aa === bh);
 }
 
 function saveSnapshot_(body) {
@@ -602,6 +746,7 @@ function saveSnapshot_(body) {
   const originalRows = lastRow > 1 ? gamesSheet.getRange(2, 1, lastRow - 1, 13).getValues() : [];
   const rows = originalRows.map(r => r.slice());
   const manualLinks = manualArchiveLinks_(ss, rows);
+  const learnedAliases = readTeamAliases_(ss, manualLinks.teamAliases);
   const idIndex = new Map();
   const footballIndex = new Map();
   const nameIndex = new Map();
@@ -658,7 +803,8 @@ function saveSnapshot_(body) {
         ix = footballIndex.get(footballId);
       if (ix === -1 && !rapidRepeat) {
         // Never use approximate names alone to pair two BSKT CUP games.
-        ix = chooseMatch_(rows, m.date, m.home, m.away, m.competition, srid);
+        ix = chooseMatch_(rows, m.date, m.home, m.away, m.competition, srid,
+          learnedAliases, source);
       }
       if (ix === -1) {
         const key = [m.date, norm_(m.competition), normTeam_(m.home), normTeam_(m.away),
