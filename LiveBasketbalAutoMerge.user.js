@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LIVE basketbal - kontrola a sloučení duplicit
 // @namespace    live-basketbal-collector
-// @version      1.0.2
+// @version      1.1.0
 // @author       LM
 // @license      MIT
 // @description  Bezpečný náhled a potvrzené sloučení duplicit v Google Sheets.
@@ -123,6 +123,8 @@
     panel.replaceChildren();
     const h = el('div', '', 'head');
     h.append(el('strong', 'Párování LIVE basketbalu'),
+      button('🤖 AI fronta', aiPreview),
+      button('Pravidla', preview),
       button('Nastavení', () => configure()),
       button('✕', () => { panel.style.display = 'none'; }));
     panel.append(h);
@@ -131,6 +133,52 @@
     const node = el('div', message, cls);
     panel.append(node);
     return node;
+  }
+  async function aiPreview() {
+    if (busy) return;
+    busy = true;
+    panel.style.display = '';
+    header();
+    status('Načítám AI frontu z listu AI sloučení…');
+    try {
+      const data = await request('aiMerge.preview');
+      header();
+      status('AI připravila ' + data.auto + ' jistějších skupin ke sloučení. ' +
+        data.review + ' skupin čeká na tvoji kontrolu. ' +
+        data.processed + ' již vyřízeno.');
+      status('Čísla řádků se nepoužívají – při sloučení se hledá podle klíčů. ' +
+        'Neplatné, ztracené nebo konfliktní skupiny se přeskočí.');
+      const actions = el('div', '', 'actions');
+      const merge = button('🤖 Sloučit jisté (' + data.auto + ')', async () => {
+        if (busy || !data.auto) return;
+        if (!confirm('Spojit ' + data.auto + ' skupin označených AI jako SLOUČIT? ' +
+          'Sporné skupiny zůstanou k prověření. Všechny původní řádky se archivují.')) return;
+        busy = true;
+        merge.disabled = true;
+        try {
+          const res = await request('aiMerge.apply');
+          alert('AI sloučení: ' + res.mergedGroups + ' skupin, odstraněno ' +
+            res.removedRows + ' duplicitních řádků. Zablokováno: ' + res.blocked +
+            '. V listu AI sloučení najdeš výsledky a sporné případy.');
+          busy = false;
+          await aiPreview();
+        } catch (e) {
+          alert('Sloučení selhalo: ' + e.message);
+        } finally {
+          busy = false;
+          merge.disabled = false;
+        }
+      });
+      merge.disabled = !data.auto;
+      actions.append(merge, button('Aktualizovat frontu', aiPreview));
+      panel.append(actions);
+    } catch (e) {
+      header();
+      status(e.message, 'warn');
+      panel.append(button('Znovu načíst AI frontu', aiPreview));
+    } finally {
+      busy = false;
+    }
   }
   async function preview() {
     if (busy) return;
