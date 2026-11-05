@@ -33,6 +33,15 @@ Při čistém integračním testu 2026-11-02 v 19:19 se podařilo spojit `AS Pap
 
 **Nutný jednorázový krok: tuto verzi z GitHubu znovu nasadit v Google Apps Scriptu.** Přepsat obsah `Code.gs`, pak `Nasadit → Spravovat nasazení → Upravit (tužka) → Nová verze → Nasadit`. GitHub workflow samo o sobě neupravuje nasazenou webovou aplikaci. Po aktualizaci už se opravy budou provádět při každém běhu automaticky; tabulku není třeba čistit ani znovu zakládat.
 
+## AI fronta sloučení (stabilní klíče, ne čísla řádků)
+
+Záložka **AI sloučení** v [našem Google Sheetu](https://docs.google.com/spreadsheets/d/1LWy7tTceA-kP_OMSlNRm1cLrzxAx0hMq4DI4pbzYOwI/edit#gid=915503390) obsahuje návrhy, které ChatGPT průběžně vyhodnotil. **Tato záložka je statická fronta** – další AI analýza se musí vytvořit znovu v chatu, neprobíhá sama každých 15 minut a nevyžaduje OpenAI API klíč.
+
+Každá skupina má stav `SLOUČIT` (jistější shoda) nebo `PROVĚŘIT` (nejasný případ). Obsahuje klíč zachovaného zápasu a JSON seznam dalších klíčů, orientaci domácích/hostů, názvy a orientační čísla řádků. **Čísla řádků neslouží k mazání**. Backend po kliknutí vždy znovu vyhledá aktuální klíče, ověří datum, kategorii, event ID, zdrojové konflikty a archivuje originály před změnou. Skupiny označené `PROVĚŘIT` nikdy automaticky neslučuje.
+
+Ke stávajícímu Apps Script projektu přidej nový soubor [AIQueueMerge.gs](AIQueueMerge.gs), aktualizuj hlavní [GoogleAppsScript.gs](GoogleAppsScript.gs) a v Tampermonkey nahraď skript verzí 1.1.2+ z [LiveBasketbalAutoMerge.user.js](LiveBasketbalAutoMerge.user.js). Používá se již nastavený `MERGE_KEY`; nové heslo není potřeba. **Aktualizuj stávající nasazení webové aplikace na novou verzi** a zachovej `/exec` URL. V TM klikni na **AUTO SPOJENÍ → AI fronta → Sloučit jisté**. Velké množství návrhů backend bezpečně zpracovává po skupinách, TM je spustí postupně. Stav `SLOUČENO`/`BLOKOVÁNO` a důvod je v AI záložce.
+
+Na uživatelovu žádost se při potvrzení také **archivují a odstraňují zdánlivé zápasy, které mají v obou názvech víc týmů oddělených `/`** (například `Utah Jazz/Cleveland Cavaliers – Pelicans/Thunder`). Zachováváme jednu součást na jeden jednotlivý zápas; kombinované souhrnné výpisy z 1xBit se při dalších ingestích ignorují. Jediný lomítkový název klubu není důvodem k smazání. Archivní role je `REMOVED MULTI-FIXTURE` a z těchto řádků se neučí aliasy.
 ## Tampermonkey: náhled a slučování duplicit
 
 Soubor **[LiveBasketbalAutoMerge.user.js](LiveBasketbalAutoMerge.user.js)** přidá do Google tabulky tlačítko **AUTO SPOJENÍ**. Vypíše návrhy duplicit podle data, soutěže, kategorie, ověřených ID, názvů týmů a naučených aliasů. Nic se nesmaže bez potvrzení. Bezpečnější shody jsou předvybrané, nejisté návrhy je nutné označit ručně. Nejde o volání AI modelu, ale o konzervativní pravidlové párování.
