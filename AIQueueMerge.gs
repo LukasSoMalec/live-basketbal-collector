@@ -59,11 +59,22 @@ function aiMergeAllFootballIds_(note) {
   ))];
 }
 
+// A combined listing contains 2+ real fixtures in one bookmaker record.
+// Only delete the legacy rows that were observed solely at 1xBit and have
+// no verified event identifier. Always archive them first.
+function aiMergeRemovableComposite_(row) {
+  return multipleFixtureListing_(row[3], row[4]) &&
+    row[7] === 'ANO' &&
+    [row[5],row[6],row[8]].every(v => v !== 'ANO') &&
+    !aiMergeAllIds_(row[12]).length &&
+    !aiMergeAllFootballIds_(row[12]).length;
+}
+
 function aiMergeSafety_(members, planDate) {
   if (members.some(r => !r[0] || !r[3] || !r[4]))
     return 'Některý zápas je neúplný.';
-  if (members.some(r => /[/\\]/.test(String(r[3])+' '+String(r[4]))))
-    return 'Název obsahuje více zápasů oddělených lomítkem.';
+  if (members.some(r => multipleFixtureListing_(r[3], r[4])))
+    return 'Jeden řádek obsahuje několik různých zápasů.';
   const dates = new Set(members.map(r => matchDateKey_(r[1])));
   if (dates.size !== 1 || !dates.has(String(planDate)))
     return 'Neshoduje se datum utkání.';
@@ -108,8 +119,12 @@ function aiMergeQueuePreview_() {
     else if (String(r[1] || '').trim() === 'PROVĚŘIT') review++;
     else if (r[0]) blocked++;
   }
+  const games=ss.getSheetByName('Zápasy');
+  const count=games ? games.getLastRow() : 0;
+  const legacy=count>1 ? games.getRange(2,1,count-1,13).getValues() : [];
+  const removable=legacy.filter(aiMergeRemovableComposite_).length;
   return {ok:true, auto, review, processed:done, other:blocked,
-    message:'Pro sloučení se používají klíče, nikoli čísla řádků.'};
+    removable, message:'Pro sloučení se používají klíče, nikoli čísla řádků.'};
 }
 
 function aiMergeQueueApply_() {
@@ -159,7 +174,10 @@ function aiMergeQueueApply_() {
     outcomes.set(p.planIndex,['BLOKOVÁNO','Zápas se nachází ve více skupinách.']);
     return false;
   });
-  if (safe.length) {
+  const inMerge=new Set(safe.flatMap(p=>p.indices));
+  const compositeIndices=original.map((r,i)=>aiMergeRemovableComposite_(r) &&
+    !inMerge.has(i) ? i : -1).filter(i=>i>=0);
+  if (safe.length || compositeIndices.length) {
     const rows=original.map(r=>r.slice());
     const archive=[];
     const changes=[];
@@ -200,6 +218,12 @@ function aiMergeQueueApply_() {
       outcomes.set(plan.planIndex,['SLOUČENO',
         'Připojeno '+(plan.indices.length-1)+' řádků; '+stamp]);
     }
+    for (const ix of compositeIndices) {
+      const row=original[ix];
+      archive.push([stamp,String(row[0]||''),ix+2,
+        'REMOVED MULTI-FIXTURE',...row]);
+      deleted.push(ix);
+    }
     // Exact original records must be in the archive before deletions.
     archiveHistoricalDuplicates_(ss,archive);
     for (const c of changes)
@@ -210,7 +234,9 @@ function aiMergeQueueApply_() {
   for (const [p,value] of outcomes)
     q.sh.getRange(p+2,10,1,2).setValues([value]);
   return {ok:true,mergedGroups:safe.length,
-    removedRows:safe.reduce((n,p)=>n+p.indices.length-1,0),
+    removedComposites:compositeIndices.length,
+    removedRows:safe.reduce((n,p)=>n+p.indices.length-1,0) +
+      compositeIndices.length,
     blocked:[...outcomes.values()].filter(x=>x[0]==='BLOKOVÁNO').length,
     remainingAuto:Math.max(0,q.rows.filter(r=>
       String(r[1]||'').trim()==='SLOUČIT' &&
