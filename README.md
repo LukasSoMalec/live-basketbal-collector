@@ -33,6 +33,21 @@ Při čistém integračním testu 2026-11-02 v 19:19 se podařilo spojit `AS Pap
 
 **Nutný jednorázový krok: tuto verzi z GitHubu znovu nasadit v Google Apps Scriptu.** Přepsat obsah `Code.gs`, pak `Nasadit → Spravovat nasazení → Upravit (tužka) → Nová verze → Nasadit`. GitHub workflow samo o sobě neupravuje nasazenou webovou aplikaci. Po aktualizaci už se opravy budou provádět při každém běhu automaticky; tabulku není třeba čistit ani znovu zakládat.
 
+## Tampermonkey: náhled a slučování duplicit
+
+Soubor **[LiveBasketbalAutoMerge.user.js](LiveBasketbalAutoMerge.user.js)** přidá do Google tabulky tlačítko **AUTO SPOJENÍ**. Vypíše návrhy duplicit podle data, soutěže, kategorie, ověřených ID, názvů týmů a naučených aliasů. Nic se nesmaže bez potvrzení. Bezpečnější shody jsou předvybrané, nejisté návrhy je nutné označit ručně. Nejde o volání AI modelu, ale o konzervativní pravidlové párování.
+
+Při potvrzení nové funkce v **AutoMerge.gs** znovu prověří platnost návrhů, zamknou zápis, spojí všechna ANO a archivují oba původní řádky **před** odstraněním duplicit. Při obráceném pořadí soupeřů uloží příznak REVERSED a budoucí aliasy se naučí ve správném směru.
+
+**Jednorázové nastavení:**
+
+1. Do současného projektu Google Apps Script přidej nový soubor `AutoMerge.gs` a nahraď původní `GoogleAppsScript.gs` nejnovější verzí z repozitáře. `ManualMerge.gs` není nutné měnit.
+2. V Nastavení projektu → Vlastnosti skriptu vytvoř nový silný tajný klíč `MERGE_KEY` (minimálně 32 znaků). **Nepoužívej INGEST_KEY.**
+3. V Nasadit → Spravovat nasazení → Upravit aktualizuj **existující** webovou aplikaci na novou verzi, ať zůstane stejné `/exec` URL používané GitHubem.
+4. Do Tampermonkey vlož obsah `LiveBasketbalAutoMerge.user.js`. V Google Sheets otevři tlačítko AUTO SPOJENÍ, jednou zadej `/exec` URL a svůj `MERGE_KEY`.
+5. Vyhodnoť návrhy a potvrď vybraná sloučení. Doporučujeme před prvním použitím mít připravenou Historii verzí.
+
+Klíč je uložen pouze lokálně v Tampermonkey. Nikdy ho nikomu neposílej. Naplánovaný patnáctiminutový sběr a jeho GitHub tajný klíč zůstávají beze změny. Slučování probíhá jen na explicitní kliknutí uživatele.
 ## Trvalé ruční slučování zápasů
 
 Po ručním sloučení přes `ManualMerge.gs` se původní řádky ukládají do listu `Archiv duplicit` s rolí `MANUAL MERGED FROM`. Nová verze `GoogleAppsScript.gs` tato historická rozhodnutí při každém ingestu znovu načítá: mapuje původní název soutěže a obou týmů (jen pro původní zdroj, který měl `ANO`) na **aktuálně zachovaný zápas**. Zvládá i více navazujících ručních sloučení, například A → B → C. Pokud už se smazaná varianta mezitím znovu objevila, provede navíc retrospektivní úklid včetně archivace, bez ztráty potvrzených `ANO`.
