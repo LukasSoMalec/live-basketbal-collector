@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LIVE basketbal - kontrola a sloučení duplicit
 // @namespace    live-basketbal-collector
-// @version      1.1.0
+// @version      1.1.1
 // @author       LM
 // @license      MIT
 // @description  Bezpečný náhled a potvrzené sloučení duplicit v Google Sheets.
@@ -145,20 +145,24 @@
       header();
       status('AI připravila ' + data.auto + ' jistějších skupin ke sloučení. ' +
         data.review + ' skupin čeká na tvoji kontrolu. ' +
-        data.processed + ' již vyřízeno.');
+        data.processed + ' již vyřízeno. ' +
+        (data.removable || 0) + ' kombinovaných řádků s / k odstranění.');
       status('Čísla řádků se nepoužívají – při sloučení se hledá podle klíčů. ' +
         'Neplatné, ztracené nebo konfliktní skupiny se přeskočí.');
       const actions = el('div', '', 'actions');
-      const merge = button('🤖 Sloučit jisté (' + data.auto + ')', async () => {
-        if (busy || !data.auto) return;
-        if (!confirm('Spojit ' + data.auto + ' skupin označených AI jako SLOUČIT? ' +
+      const merge = button('🤖 Sloučit jisté (' + data.auto +
+        ') + vyřadit kombinované (' + (data.removable || 0) + ')', async () => {
+        if (busy || (!data.auto && !data.removable)) return;
+        if (!confirm('Spojit ' + data.auto + ' skupin označených AI jako SLOUČIT ' +
+          'a vyřadit ' + (data.removable || 0) + ' kombinovaných zápisů s lomítky? ' +
           'Sporné skupiny zůstanou k prověření. Všechny původní řádky se archivují.')) return;
         busy = true;
         merge.disabled = true;
         try {
           const res = await request('aiMerge.apply');
           alert('AI sloučení: ' + res.mergedGroups + ' skupin, odstraněno ' +
-            res.removedRows + ' duplicitních řádků. Zablokováno: ' + res.blocked +
+            res.removedRows + ' řádků (z toho kombinovaných ' +
+            (res.removedComposites || 0) + '). Zablokováno: ' + res.blocked +
             '. V listu AI sloučení najdeš výsledky a sporné případy.');
           busy = false;
           await aiPreview();
@@ -169,7 +173,7 @@
           merge.disabled = false;
         }
       });
-      merge.disabled = !data.auto;
+      merge.disabled = !data.auto && !data.removable;
       actions.append(merge, button('Aktualizovat frontu', aiPreview));
       panel.append(actions);
     } catch (e) {
