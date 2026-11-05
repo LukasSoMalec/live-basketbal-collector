@@ -133,10 +133,12 @@ function autoMergePlan_(rows, aliases) {
   for (const c of result) {
     collisions.set(c.removedKey, (collisions.get(c.removedKey) || 0) + 1);
   }
+  const removedKeys = new Set(result.map(c => c.removedKey));
   for (const c of result) {
-    if (collisions.get(c.removedKey) > 1 && c.level === 'safe') {
+    if (c.level !== 'safe') continue;
+    if (collisions.get(c.removedKey) > 1 || removedKeys.has(c.masterKey)) {
       c.level = 'review';
-      c.reason = 'Více možných cílových řádků';
+      c.reason = 'Nejednoznačné řetězení více návrhů';
     }
   }
   return result.sort((a, b) => a.level === b.level ?
