@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LIVE basketbal - kontrola a sloučení duplicit
 // @namespace    live-basketbal-collector
-// @version      1.1.1
+// @version      1.1.2
 // @author       LM
 // @license      MIT
 // @description  Bezpečný náhled a potvrzené sloučení duplicit v Google Sheets.
@@ -159,11 +159,23 @@
         busy = true;
         merge.disabled = true;
         try {
-          const res = await request('aiMerge.apply');
-          alert('AI sloučení: ' + res.mergedGroups + ' skupin, odstraněno ' +
-            res.removedRows + ' řádků (z toho kombinovaných ' +
-            (res.removedComposites || 0) + '). Zablokováno: ' + res.blocked +
-            '. V listu AI sloučení najdeš výsledky a sporné případy.');
+          const totals = {groups: 0, rows: 0, combined: 0, blocked: 0};
+          let remaining = 1;
+          for (let pass = 0; pass < 6 && remaining > 0; pass++) {
+            const res = await request('aiMerge.apply');
+            totals.groups += res.mergedGroups || 0;
+            totals.rows += res.removedRows || 0;
+            totals.combined += res.removedComposites || 0;
+            totals.blocked += res.blocked || 0;
+            remaining = res.remainingAuto || 0;
+            // No progress: avoid a retry loop on a stale/broken queue.
+            if (!res.mergedGroups && !res.blocked) break;
+          }
+          alert('AI sloučení: ' + totals.groups + ' skupin, odstraněno ' +
+            totals.rows + ' řádků (z toho kombinovaných ' +
+            totals.combined + '). Zablokováno: ' + totals.blocked +
+            (remaining ? '. Některé návrhy zůstaly ve frontě.' : '') +
+            '. Podrobnosti najdeš v listu AI sloučení.');
           busy = false;
           await aiPreview();
         } catch (e) {
