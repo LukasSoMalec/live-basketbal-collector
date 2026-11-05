@@ -12,11 +12,18 @@ function doPost(e) {
   const lock = LockService.getScriptLock();
   try {
     const body = JSON.parse(e.postData.contents || '{}');
-    const requiredKey = PropertiesService.getScriptProperties().getProperty('INGEST_KEY');
+    const action = String(body.action || '');
+    const isMerge = action === 'autoMerge.preview' || action === 'autoMerge.apply';
+    // A separate, purpose-limited key prevents exposing the ingest key
+    // in Tampermonkey. Do not reuse SHEETS_INGEST_KEY for the browser UI.
+    const property = isMerge ? 'MERGE_KEY' : 'INGEST_KEY';
+    const requiredKey = PropertiesService.getScriptProperties().getProperty(property);
     if (!requiredKey || !body.key || body.key !== requiredKey) {
       return json_({ok: false, error: 'Unauthorized'});
     }
     if (!lock.tryLock(25000)) return json_({ok: false, error: 'Locked; retry next run'});
+    if (action === 'autoMerge.preview') return json_(autoMergePreview_());
+    if (action === 'autoMerge.apply') return json_(autoMergeApply_(body.ids));
     return json_(saveSnapshot_(body));
   } catch (err) {
     return json_({ok: false, error: String(err.message || err).slice(0, 300)});
@@ -541,7 +548,8 @@ function manualArchiveLinks_(ss, rows) {
   });
 
   for (const h of history) {
-    if (String(h[3] || '') !== 'MANUAL MERGED FROM') continue;
+    const role = String(h[3] || '');
+    if (!/^(?:MANUAL|AUTO) MERGED FROM(?: REVERSED)?$/.test(role)) continue;
     const targetKey = String(h[1] || '');
     const oldKey = String(h[4] || '');
     const date = matchDateKey_(h[5]);
@@ -554,6 +562,7 @@ function manualArchiveLinks_(ss, rows) {
       key: oldKey,
       fingerprint: [date, norm_(h[6]), normTeam_(h[7]), normTeam_(h[8])].join('|'),
       date, league: String(h[6]), home: String(h[7]), away: String(h[8]),
+      reversed: role.endsWith(' REVERSED'),
       sources: SOURCES.filter((_, i) => h[9 + i] === 'ANO')
     });
   }
@@ -588,11 +597,11 @@ function manualArchiveLinks_(ss, rows) {
       const category = fixtureClass_(master[2], master[3], master[4]);
       for (const source of entry.sources) {
         teamAliases.push({source, league: entry.league,
-          team: entry.home, canonical: String(master[3]),
-          category, scope: String(master[2]), origin: 'Ruční sloučení'});
+          team: entry.home, canonical: String(master[entry.reversed ? 4 : 3]),
+          category, scope: String(master[2]), origin: 'Potvrzené sloučení'});
         teamAliases.push({source, league: entry.league,
-          team: entry.away, canonical: String(master[4]),
-          category, scope: String(master[2]), origin: 'Ruční sloučení'});
+          team: entry.away, canonical: String(master[entry.reversed ? 3 : 4]),
+          category, scope: String(master[2]), origin: 'Potvrzené sloučení'});
       }
     }
     for (const source of entry.sources) {
