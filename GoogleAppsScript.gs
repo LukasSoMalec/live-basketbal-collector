@@ -44,6 +44,16 @@ function json_(data) {
       .setMimeType(ContentService.MimeType.JSON);
 }
 
+// Identifies one feed row containing multiple different fixtures (teams
+// separated by / in BOTH columns). Single slash in a club name is not enough.
+function multipleFixtureListing_(home, away) {
+  const parts = value => String(value || '').split('/')
+    .map(v => v.trim()).filter(Boolean);
+  const h = parts(home), a = parts(away);
+  return h.length >= 2 && a.length >= 2 && h.length === a.length &&
+    h.every(v => v.length >= 3) && a.every(v => v.length >= 3);
+}
+
 function norm_(text) {
   return String(text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -788,6 +798,9 @@ function saveSnapshot_(body) {
     if (info.matches.length > 3000) throw new Error('Unexpectedly large source list');
     for (const m of info.matches) {
       if (!m || !m.home || !m.away || !/^\d{4}-\d{2}-\d{2}$/.test(m.date)) continue;
+      // Aggregated 1xBit titles like "Lakers/Bulls – Warriors/Celtics"
+      // describe several independent matches, not a fixture. Never ingest.
+      if (source === '1xBit' && multipleFixtureListing_(m.home, m.away)) continue;
       const srid = eventId_(m.eventId);
       const footballId = source === 'Football.com' ? footballOpaqueId_(m.eventId) : '';
       const rapidRepeat = rapidRepeatLeague_(m.competition);
