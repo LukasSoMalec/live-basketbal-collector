@@ -5,7 +5,7 @@
 // @author       LM
 // @license      MIT
 // @description  Bezpečný náhled a potvrzené sloučení duplicit v Google Sheets.
-// @match        https://docs.google.com/spreadsheets/d/1LWy7tTceA-kP_OMSlNRm1cLrzxAx0hMq4DI4pbzYOwI/*
+// @match        https://docs.google.com/spreadsheets/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
@@ -15,6 +15,7 @@
 // ==/UserScript==
 (() => {
   'use strict';
+  if (!location.pathname.includes('/d/1LWy7tTceA-kP_OMSlNRm1cLrzxAx0hMq4DI4pbzYOwI/')) return;
   if (document.getElementById('lm-auto-merge')) return;
   const style = document.createElement('style');
   style.textContent = [
