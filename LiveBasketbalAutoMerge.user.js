@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LIVE basketbal - kontrola a sloučení duplicit
 // @namespace    live-basketbal-collector
-// @version      1.0.0
+// @version      1.0.2
 // @author       LM
 // @license      MIT
 // @description  Bezpečný náhled a potvrzené sloučení duplicit v Google Sheets.
@@ -81,12 +81,12 @@
     GM_setValue('merge_key', key.trim());
     return true;
   }
-  function request(action, ids = []) {
+  function request(action, ids = [], attempt = 0) {
     const url = GM_getValue('webapp_url', '');
     const key = GM_getValue('merge_key', '');
     if (!validUrl(url) || !key) {
       if (!configure()) return Promise.reject(new Error('Chybí nastavení'));
-      return request(action, ids);
+      return request(action, ids, attempt);
     }
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
@@ -98,6 +98,15 @@
         onload(r) {
           try {
             const data = JSON.parse(r.responseText);
+            // Jedině tento výsledek potvrzuje, že server sloučení vůbec
+            // nezačal. Proto je opakování bezpečné i pro akci apply.
+            if (data?.ok === false &&
+                /^Locked; retry next run$/i.test(String(data.error || '').trim()) &&
+                attempt < 3) {
+              setTimeout(() => resolve(request(action, ids, attempt + 1)),
+                3500 * (attempt + 1));
+              return;
+            }
             if (r.status >= 400 || data.ok !== true)
               throw new Error(data.error || 'HTTP ' + r.status);
             resolve(data);
