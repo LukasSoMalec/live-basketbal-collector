@@ -198,8 +198,10 @@ function aiMergeQueueApply_(requestedIds) {
     if (present.has(groupId)) throw new Error('Duplicitní ID skupiny v AI frontě.');
     present.add(groupId);
     const level = String(row[1] || '').trim();
-    if (!['SLOUČIT','PROVĚŘIT'].includes(level) || !aiMergePending_(row[9])) {
-      outcomes.set(p,['BLOKOVÁNO','Skupina není čekající návrh.']);
+    // Already completed by an earlier click or background cleanup: no-op.
+    if (!aiMergePending_(row[9])) continue;
+    if (!['SLOUČIT','PROVĚŘIT'].includes(level)) {
+      outcomes.set(p,['BLOKOVÁNO','Skupina nemá povolené rozhodnutí.']);
       continue;
     }
     try {
