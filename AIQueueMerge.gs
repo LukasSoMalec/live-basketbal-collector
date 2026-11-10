@@ -298,3 +298,27 @@ function aiMergeQueueApply_(requestedIds) {
       String(r[1]||'').trim()==='SLOUČIT' &&
       aiMergePending_(r[9]) && !outcomes.has(p)).length};
 }
+
+
+// Separate opt-in cleanup for old synthetic sportsbook records containing
+// multiple fixtures. Never run implicitly when merging ordinary AI groups.
+function aiMergeQueueCleanComposites_() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh = ss.getSheetByName('Zápasy');
+  if (!sh) throw new Error('Chybí záložka Zápasy.');
+  const n = sh.getLastRow();
+  const rows = n > 1 ? sh.getRange(2, 1, n-1, 13).getValues() : [];
+  const targets = [];
+  for (let i=0; i<rows.length && targets.length<10; i++)
+    if (aiMergeRemovableComposite_(rows[i])) targets.push(i);
+  if (!targets.length) return {ok:true, removedRows:0, remaining:0};
+  const stamp = Utilities.formatDate(new Date(),'Europe/Prague','yyyy-MM-dd HH:mm:ss');
+  const archive = targets.map(ix => [
+    stamp, String(rows[ix][0]||''), ix+2, 'REMOVED MULTI-FIXTURE', ...rows[ix]
+  ]);
+  archiveHistoricalDuplicates_(ss, archive);
+  SpreadsheetApp.flush();
+  deleteHistoricalDuplicateRows_(sh, targets.sort((a,b)=>b-a));
+  return {ok:true, removedRows:targets.length,
+    remaining:Math.max(0,rows.filter(aiMergeRemovableComposite_).length-targets.length)};
+}
