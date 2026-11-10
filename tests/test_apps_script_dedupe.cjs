@@ -8,6 +8,7 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(fs.readFileSync('GoogleAppsScript.gs', 'utf8'), context);
+vm.runInContext(fs.readFileSync('ScheduledDedupe.gs', 'utf8'), context);
 const date = '2026-11-02';
 const ts = '2026-11-02 19:04:32';
 
@@ -156,8 +157,11 @@ function runMockIngestion() {
   };
   const result=context.saveSnapshot_(payload);
   assert.equal(result.ok,true);
-  assert.equal(result.mergedDuplicates,1);
-  assert.equal(result.currentRows,1);
+  assert.equal(result.mergedDuplicates,0); // Ingest only records matches.
+  assert.equal(result.currentRows,2);
+  assert.equal(games.getLastRow(),3);
+  const background=context.scheduledDeduplicateDay_(context.SpreadsheetApp.openById(),date);
+  assert.equal(background.merged,1);
   assert.equal(games.getLastRow(),2);
   assert.equal(games.rows[1][5],'ANO');
   assert.equal(games.rows[1][7],'ANO');
@@ -177,8 +181,10 @@ function runMockIngestion() {
   games.rows.push(alternative);
   const flagged=context.saveSnapshot_(payload);
   assert.equal(flagged.mergedDuplicates,0);
-  assert.equal(flagged.reviewCandidates,2);
+  assert.equal(flagged.reviewCandidates,0);
   assert.equal(games.rows.length,3);
+  const flaggedBackground=context.scheduledDeduplicateDay_(context.SpreadsheetApp.openById(),date);
+  assert.equal(flaggedBackground.review,2);
   assert.match(games.rows[1][12],/ZKONTROLOVAT DUPLIKAT/);
   assert.match(games.rows[2][12],/ZKONTROLOVAT DUPLIKAT/);
 }
@@ -416,8 +422,11 @@ function testManualArchiveAliasesPreventRespawnAndReplayChains() {
   const first=context.saveSnapshot_(payload);
   assert.equal(first.ok,true);
   assert.equal(first.created,0);
-  assert.equal(first.mergedDuplicates,2);
-  assert.equal(first.currentRows,1);
+  assert.equal(first.mergedDuplicates,0);
+  assert.equal(first.currentRows,3);
+  assert.equal(games.getLastRow(),4);
+  const bg=context.scheduledDeduplicateDay_(context.SpreadsheetApp.openById(),date);
+  assert.equal(bg.merged,2);
   assert.equal(games.getLastRow(),2);
   assert.equal(games.rows[1][0],master[0]);
   assert.equal(games.rows[1][5],'ANO');
