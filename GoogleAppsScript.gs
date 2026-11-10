@@ -292,6 +292,29 @@ function chooseHistoricalMaster_(rows, members) {
   })[0];
 }
 
+// A cheap, conservative lookup key for the exact team-equivalence rules used
+// by sameTeam_(). All candidates are still revalidated by sameHistoricalFixture_.
+// WNBL aliases are indexed only as additional possible candidates; the final
+// comparison validates that BOTH competitions really are WNBL.
+function historicalTeamKey_(team, league, ignoreWomen) {
+  const value = /\bwnbl\b/.test(normLeague_(league))
+    ? fixtureTeamAlias_(team, league) : team;
+  const words = teamWords_(value, ignoreWomen);
+  const protectedWords = new Set(['women', 'woman', 'w', 'men', 'u18',
+    'u19', 'u20', 'u21', 'u22', 'u23', 'reserves', 'reserve', 'academy',
+    'junior', 'juniors', 'ii', 'iii', 'b', '2']);
+  const sig = words.filter(w => protectedWords.has(w)).sort().join('|');
+  return teamCore_(value, ignoreWomen) + '#' + sig;
+}
+
+function historicalPairKey_(row) {
+  const cls = fixtureClass_(row[2], row[3], row[4]);
+  const isWomen = cls.endsWith('|women');
+  const teams = [historicalTeamKey_(row[3], row[2], isWomen),
+    historicalTeamKey_(row[4], row[2], isWomen)].sort();
+  return teams.join('||');
+}
+
 function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map(), limits = {}) {
   // Group only within the same match day and youth/women category.
   const buckets = new Map();
@@ -303,30 +326,73 @@ function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map(), li
   });
   const groups = [];
   const flagged = new Set();
+  // Index likely matches by canonical team pair or exact event ID.
+  // Previously every row scanned every other group, then every remaining
+  // pair was rechecked. Historical weeks with hundreds of games became slow.
   for (const indices of buckets.values()) {
     const bucketGroups = [];
+    const byPair = new Map(), bySrId = new Map(), byOpaqueId = new Map();
+    const pairByIndex = new Map();
+    function register(map, key, group) {
+      if (!key) return;
+      if (!map.has(key)) map.set(key, new Set());
+      map.get(key).add(group);
+    }
     for (const ix of indices) {
-      const candidates = bucketGroups.filter(g =>
-        g.every(j => sameHistoricalFixture_(rows[ix], rows[j]) &&
-                     sameHistoricalFixture_(rows[j], rows[ix])));
-      if (candidates.length === 1) {
-        candidates[0].push(ix);
-      } else if (candidates.length > 1) {
-        flagged.add(ix);
-        candidates.forEach(g => g.forEach(j => flagged.add(j)));
-        bucketGroups.push([ix]);
+      const r = rows[ix];
+      const pair = historicalPairKey_(r);
+      const srid = eventId_(r[12]);
+      const opaque = rowFootballOpaqueId_(r[12]);
+      pairByIndex.set(ix, pair);
+      const candidates = new Set([
+        ...(byPair.get(pair) || []),
+        ...(srid ? bySrId.get(srid) || [] : []),
+        ...(opaque ? byOpaqueId.get(opaque) || [] : [])
+      ]);
+      const matching = [...candidates].filter(g =>
+        g.every(j => sameHistoricalFixture_(r, rows[j]) &&
+                     sameHistoricalFixture_(rows[j], r)));
+      let group;
+      if (matching.length === 1) {
+        group = matching[0];
+        group.push(ix);
       } else {
-        bucketGroups.push([ix]);
+        if (matching.length > 1) {
+          flagged.add(ix);
+          matching.forEach(g => g.forEach(j => flagged.add(j)));
+        }
+        group = [ix];
+        bucketGroups.push(group);
       }
+      // Register the entire growing group for all of its members. This
+      // includes groups linked through equal ID but different team labels.
+      register(byPair, pair, group);
+      register(bySrId, srid, group);
+      register(byOpaqueId, opaque, group);
     }
     groups.push(...bucketGroups);
-    // Only mark remaining possible duplicates, never merge conflicting IDs.
-    for (let i = 0; i < bucketGroups.length; i++) {
-      for (let j = i + 1; j < bucketGroups.length; j++) {
-        if (bucketGroups[i].some(a => bucketGroups[j].some(b =>
-            possibleHistoricalDuplicate_(rows[a], rows[b])))) {
-          bucketGroups[i].forEach(ix => flagged.add(ix));
-          bucketGroups[j].forEach(ix => flagged.add(ix));
+    // Potentially conflicting IDs should be flagged, but only equal canonical
+    // team pairs could satisfy possibleHistoricalDuplicate_().
+    const groupsByPair = new Map();
+    for (const group of bucketGroups) {
+      const keys = new Set(group.map(ix => pairByIndex.get(ix)));
+      for (const pair of keys) register(groupsByPair, pair, group);
+    }
+    const seenPairs = new Set();
+    for (const candidateGroups of groupsByPair.values()) {
+      const list = [...candidateGroups];
+      for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+          const a = bucketGroups.indexOf(list[i]);
+          const b = bucketGroups.indexOf(list[j]);
+          const key = a + ':' + b;
+          if (seenPairs.has(key)) continue;
+          seenPairs.add(key);
+          if (list[i].some(ai => list[j].some(bi =>
+              possibleHistoricalDuplicate_(rows[ai], rows[bi])))) {
+            list[i].forEach(ix => flagged.add(ix));
+            list[j].forEach(ix => flagged.add(ix));
+          }
         }
       }
     }
