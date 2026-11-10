@@ -617,7 +617,29 @@ function testScheduledBatchKeepsDayWithDeferredGroups() {
   assert.equal(second.more,false);
   assert.equal(sheets.Zápasy.getLastRow(),17);
 }
+function testIndexedDedupeLargeDayAndWnblAliases() {
+  const rows=[];
+  for (let i=0; i<830; i++) {
+    const x=row('Regional League '+i,'Alpha'+i,'Beta'+i,5,
+      '',ts,ts,1,'2026-11-07');
+    x[0]='unique-'+i;
+    rows.push(x);
+  }
+  const a=row('Australia. WNBL','Perth Lynx','Townsville Fire',5,
+    'sr:match:76700001',ts,ts,1,'2026-11-07');
+  const b=row('Australia. WNBL','Perth (w)','Townsville Fire',6,
+    'sr:match:76700001',ts,ts,1,'2026-11-07');
+  a[0]='wnbl-one';b[0]='wnbl-two';
+  rows.push(a,b);
+  const start=Date.now();
+  const plan=context.planHistoricalDeduplication_(rows,ts);
+  assert.equal(plan.merged,1);
+  assert.equal(plan.deferredGroups,0);
+  assert.ok(Date.now()-start<12000,
+    'Indexed comparison should handle >800 daily fixtures within 12 seconds');
+}
 testScheduledBatchKeepsDayWithDeferredGroups();
+testIndexedDedupeLargeDayAndWnblAliases();
 testMultipleAliasesMergeAndAudit();
 testKnownIdOverridesNameDifferenceButNotGender();
 testConflictAndCategoriesRemainSeparateAndFlagged();
