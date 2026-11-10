@@ -168,7 +168,13 @@ function aiMergeQueuePreview_() {
     message:'Výběr skupin je ruční; každé sloučení se znovu ověří podle stabilních klíčů.'};
 }
 
-function aiMergeQueueApply_() {
+function aiMergeQueueApply_(requestedIds) {
+  if (!Array.isArray(requestedIds) || requestedIds.length < 1 ||
+      requestedIds.length > 5 ||
+      requestedIds.some(x => typeof x !== 'string' || !x || x.length > 100) ||
+      new Set(requestedIds).size !== requestedIds.length)
+    throw new Error('Vyber 1 až 5 unikátních skupin.');
+  const requested = new Set(requestedIds);
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const matches = ss.getSheetByName('Zápasy');
   if (!matches) throw new Error('Chybí záložka Zápasy.');
@@ -184,12 +190,18 @@ function aiMergeQueueApply_() {
   }
   const plans = [];
   const outcomes = new Map();
-  let checked = 0;
-  for (let p=0; p<q.rows.length && checked<40; p++) {
+  const present = new Set();
+  for (let p=0; p<q.rows.length; p++) {
     const row = q.rows[p];
-    if (String(row[1] || '').trim()!=='SLOUČIT' ||
-        !aiMergePending_(row[9])) continue;
-    checked++;
+    const groupId = String(row[0] || '').trim();
+    if (!requested.has(groupId)) continue;
+    if (present.has(groupId)) throw new Error('Duplicitní ID skupiny v AI frontě.');
+    present.add(groupId);
+    const level = String(row[1] || '').trim();
+    if (!['SLOUČIT','PROVĚŘIT'].includes(level) || !aiMergePending_(row[9])) {
+      outcomes.set(p,['BLOKOVÁNO','Skupina není čekající návrh.']);
+      continue;
+    }
     try {
       const decoded=aiMergeQueueDecode_(row);
       const keys=[decoded.key,...decoded.others];
@@ -205,6 +217,9 @@ function aiMergeQueueApply_() {
     }
   }
 
+  for (const id of requested) if (!present.has(id))
+    throw new Error('Skupina ' + id + ' už ve frontě neexistuje.');
+
   // Never apply overlapping groups within one batch.
   const countByIndex=new Map();
   for (const p of plans)
@@ -215,9 +230,8 @@ function aiMergeQueueApply_() {
     outcomes.set(p.planIndex,['BLOKOVÁNO','Zápas se nachází ve více skupinách.']);
     return false;
   });
-  const inMerge=new Set(safe.flatMap(p=>p.indices));
-  const compositeIndices=original.map((r,i)=>aiMergeRemovableComposite_(r) &&
-    !inMerge.has(i) ? i : -1).filter(i=>i>=0);
+  // Composite cleanup is a separate explicitly confirmed action.
+  const compositeIndices=[];
   if (safe.length || compositeIndices.length) {
     const rows=original.map(r=>r.slice());
     const archive=[];
@@ -267,6 +281,7 @@ function aiMergeQueueApply_() {
     }
     // Exact original records must be in the archive before deletions.
     archiveHistoricalDuplicates_(ss,archive);
+    SpreadsheetApp.flush();
     for (const c of changes)
       matches.getRange(c.i+2,6,1,8).setValues([c.values]);
     deleteHistoricalDuplicateRows_(matches,deleted.sort((a,b)=>b-a));
@@ -279,7 +294,7 @@ function aiMergeQueueApply_() {
     removedRows:safe.reduce((n,p)=>n+p.indices.length-1,0) +
       compositeIndices.length,
     blocked:[...outcomes.values()].filter(x=>x[0]==='BLOKOVÁNO').length,
-    remainingAuto:Math.max(0,q.rows.filter(r=>
+    remainingAuto:q.rows.filter((r,p)=>
       String(r[1]||'').trim()==='SLOUČIT' &&
-      !String(r[9]||'').trim()).length-outcomes.size)};
+      aiMergePending_(r[9]) && !outcomes.has(p)).length};
 }
