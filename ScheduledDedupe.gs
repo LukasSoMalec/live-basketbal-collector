@@ -108,8 +108,10 @@ function scheduledDeduplicateDay_(ss, day) {
   const absoluteDeletes = plan.deleteIndices.map(ix=>localToGlobal[ix])
     .sort((a,b)=>b-a);
   if (absoluteDeletes.length) deleteHistoricalDuplicateRows_(sheet, absoluteDeletes);
-  const more = absoluteDeletes.length >= HIST_DEDUPE_MAX_DELETES;
+  // A group cap can be reached with fewer than 30 deleted rows.
+  // Stay on this date until all deferred groups are handled.
+  const more = plan.deferredGroups > 0;
   return {day, checked:localRows.length, merged:plan.merged,
     review:plan.reviewCandidates, archived:archive.length,
-    more, milliseconds:Date.now()-started};
+    deferredGroups:plan.deferredGroups, more, milliseconds:Date.now()-started};
 }
