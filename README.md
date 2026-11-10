@@ -48,6 +48,20 @@ Původní historická deduplikace na dni 2026-11-05 překročila bezpečný limi
 4. **Bezpečnost:** používá stejný `LockService.getScriptLock()` jako webový ingest a ruční slučování. Pokud sběr právě zapisuje, background se přeskočí. Každý běh před mazáním zapisuje do `Archiv duplicit`. `AI sloučení` dál vyžaduje potvrzení uživatele.
 5. **Limity:** Apps Script má limit 6 minut na jedno spuštění a celkový limit času triggerů (u běžných Google účtů 90 minut/den). Proto se nečistí vše najednou. Zatím nejde o potvrzenou opravu produkčního zápisu, dokud se kód ručně nenahraje do Apps Scriptu a neprojde jeden reálný ingest + background běh.
 
+### Opravený ruční párovač AI fronty (10. 11. 2026)
+
+**Nová verze `LiveBasketbalAutoMerge.user.js` 1.2.0** otevře po kliknutí na tlačítko `🤖 AI PÁROVÁNÍ` přímo `AI sloučení` (`aiMerge.preview`). Starší tlačítko spouštělo nákladný `autoMerge.preview` a při vyšším počtu zápasů překračovalo 65sekundový timeout. Seznam teď obsahuje přesné ID skupiny, názvy utkání, datum, doporučení `SLOUČIT/PROVĚŘIT` a případný důvod nedostupnosti.
+
+**Zásadní změna:** žádné slučování celé fronty na jeden klik. V UI označ konkrétní skupiny, případně tlačítkem `Označit jistější` předvyber pouze bezpečně vyhodnocené čekající skupiny. Akce `Sloučit označené` je po potvrzení zpracuje po 3 skupinách na jedno HTTP volání; Apps Script přijímá maximálně 5 vybraných ID na požadavek. Skupiny označené `PROVĚŘIT` můžeš výslovně označit až po vlastní kontrole; backend vždy znovu ověřuje datum, kategorii, unikátnost klíčů, konflikty event ID a překryv zdrojů. Skupiny s chybějícími/duplicitními klíči se zobrazí jako nedostupné, například historické AI-309/AI-310. **Nikdy nemaž podle starých čísel řádků.**
+
+Odstraňování umělých kombinovaných zápasů oddělených `/` má samostatné tlačítko, vlastní potvrzení a archivaci před mazáním; při běžném spojení skupin se nespouští. Zpracovávané původní řádky jsou vždy uloženy do `Archiv duplicit`.
+
+**Aktivace (nutné všechny kroky):**
+1. Ve stávajícím projektu Apps Script nahraď obsah `GoogleAppsScript.gs` a `AIQueueMerge.gs` aktuálními verzemi z tohoto repozitáře. `ScheduledDedupe.gs` a jeho stávající hodinový trigger zachovej, není nutné ho znovu instalovat.
+2. `Nasadit → Spravovat nasazení → Upravit → Nová verze → Nasadit`: aktualizuj **stávající** webovou aplikaci, abys zachoval dosavadní `/exec` adresu a `MERGE_KEY`.
+3. V Tampermonkey nahraď skript úplným souborem `LiveBasketbalAutoMerge.user.js`, ulož a aktualizuj záložku tabulky. Skript uložený `webapp_url` a `merge_key` normálně zachová; pokud zobrazí `Unauthorized`, ověř vlastnost skriptu `MERGE_KEY`, nikdy ne `INGEST_KEY`.
+4. Na stránce tabulky klikni na `🤖 AI PÁROVÁNÍ`, zkus nejprve označit jen **jednu** platnou skupinu a potvrdit. Prověř výsledek v `AI sloučení` (stav `SLOUČENO`) a původní záznamy v `Archiv duplicit`. Pak lze zpracovat další skupiny.
+
 ## AI fronta sloučení (stabilní klíče, ne čísla řádků)
 
 Záložka **AI sloučení** v [našem Google Sheetu](https://docs.google.com/spreadsheets/d/1LWy7tTceA-kP_OMSlNRm1cLrzxAx0hMq4DI4pbzYOwI/edit#gid=915503390) obsahuje návrhy, které ChatGPT průběžně vyhodnotil. **Tato záložka je statická fronta** – další AI analýza se musí vytvořit znovu v chatu, neprobíhá sama při hodinových kontrolách a nevyžaduje OpenAI API klíč.
