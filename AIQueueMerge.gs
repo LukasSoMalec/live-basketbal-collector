@@ -93,16 +93,9 @@ function aiMergeSafety_(members, planDate) {
   if (members.some(r=>rapidRepeatLeague_(r[2])) && !verifiedEqual)
     return 'Soutěž s více zápasy stejných soupeřů v jednom dni.';
 
-  for (let i=0; i<members.length; i++) {
-    for (let j=i+1; j<members.length; j++) {
-      // Two records from the SAME source are suspicious unless they both
-      // contain exactly the same independently verified event identity.
-      const overlap = SOURCES.some((_,k)=>
-        members[i][5+k] === 'ANO' && members[j][5+k] === 'ANO');
-      if (overlap && !verifiedEqual)
-        return 'Jeden zdroj už označuje oba řádky jako ANO.';
-    }
-  }
+  // Two observations marked ANO by the same bookmaker are NOT a conflict
+  // by themselves. A confirmed queue selection may consolidate duplicate
+  // provider records; conflicting verified IDs and categories are still blocked.
   return '';
 }
 
@@ -158,7 +151,9 @@ function aiMergeQueuePreview_() {
     proposals.push({
       id, level, date: matchDateKey_(r[2]),
       matches: String(r[7] || '').slice(0, 1200),
-      reason: String(r[8] || '').slice(0, 400),
+      reason: /více řádků má ANO u stejného zdroje/i.test(String(r[8] || ''))
+        ? 'Stejný zdroj má ANO u více řádků – pro výslovně potvrzené sloučení povoleno.'
+        : String(r[8] || '').slice(0, 400),
       size, valid: !problem, problem: problem.slice(0, 300)
     });
   }
