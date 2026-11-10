@@ -124,7 +124,6 @@ function testSlashCompositeArchivedDeletedOnlyOnApply() {
   assert.equal(sheets.Zápasy.rows.length,4);
   const result=context.aiMergeQueueCleanComposites_();
   assert.equal(result.removedRows,1);
-  assert.equal(result.removedRows,1);
   assert.equal(sheets.Zápasy.rows.length,3);
   assert.equal(sheets.Zápasy.rows[1][0],'real');
   assert.equal(sheets.Zápasy.rows[2][0],'clubSlash');
@@ -136,7 +135,7 @@ function testSourceOverlapBlocksMergeAndCompositeFilter() {
     row('a','Boston College Eagles','Wagner Seahawks',7),
     row('b','Boston College','Wagner Seahawks',7)
   ],[plan('g',['a','b'],[false])]);
-  assert.equal(context.aiMergeQueueApply_().mergedGroups,0);
+  assert.equal(context.aiMergeQueueApply_(['g']).mergedGroups,0);
   assert.equal(sh['AI sloučení'].rows[1][9],'BLOKOVÁNO');
   assert.equal(context.multipleFixtureListing_('A/B','C/D'),false);
   assert.equal(context.multipleFixtureListing_('Lakers/Bulls','Jazz/Celtics'),true);
