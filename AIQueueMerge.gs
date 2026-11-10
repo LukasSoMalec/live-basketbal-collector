@@ -106,12 +106,18 @@ function aiMergeSafety_(members, planDate) {
   return '';
 }
 
+// ChatGPT writes ČEKÁ as the initial state; treat that exactly like an empty status.
+function aiMergePending_(status) {
+  const v = String(status || '').trim().toUpperCase();
+  return !v || v === 'ČEKÁ' || v === 'CEKA';
+}
+
 function aiMergeQueuePreview_() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const q = aiMergeQueueRead_(ss);
   let auto=0, review=0, done=0, blocked=0;
   for (const r of q.rows) {
-    if (String(r[9] || '').trim()) {
+    if (!aiMergePending_(r[9])) {
       done++;
       continue;
     }
@@ -147,7 +153,7 @@ function aiMergeQueueApply_() {
   for (let p=0; p<q.rows.length && checked<40; p++) {
     const row = q.rows[p];
     if (String(row[1] || '').trim()!=='SLOUČIT' ||
-        String(row[9] || '').trim()) continue;
+        !aiMergePending_(row[9])) continue;
     checked++;
     try {
       const decoded=aiMergeQueueDecode_(row);
