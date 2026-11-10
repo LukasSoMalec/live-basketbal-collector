@@ -76,7 +76,7 @@ function aiMergeSafety_(members, planDate) {
   if (members.some(r => multipleFixtureListing_(r[3], r[4])))
     return 'Jeden řádek obsahuje několik různých zápasů.';
   const dates = new Set(members.map(r => matchDateKey_(r[1])));
-  if (dates.size !== 1 || !dates.has(String(planDate)))
+  if (dates.size !== 1 || !dates.has(matchDateKey_(planDate)))
     return 'Neshoduje se datum utkání.';
   const classes = new Set(members.map(r=>fixtureClass_(r[2],r[3],r[4])));
   if (classes.size !== 1)
@@ -156,7 +156,7 @@ function aiMergeQueuePreview_() {
     seenIds.add(id);
     if (problem) stale++;
     proposals.push({
-      id, level, date: String(r[2] || ''),
+      id, level, date: matchDateKey_(r[2]),
       matches: String(r[7] || '').slice(0, 1200),
       reason: String(r[8] || '').slice(0, 400),
       size, valid: !problem, problem: problem.slice(0, 300)
