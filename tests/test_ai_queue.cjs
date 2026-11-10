@@ -185,6 +185,24 @@ function testOnlySelectedGroupAndStaleProposal() {
   assert.equal(sh['AI sloučení'].rows[2][9],'');
   assert.equal(context.aiMergeQueuePreview_().auto,2);
 }
+function testDateCellIsDateObject() {
+  const p=plan('date-format',['a','b'],[false]);
+  p[2]=new Date('2026-11-05T12:00:00Z');
+  const sh=mock([
+    row('a','Saint Josephs Hawks','Longwood Lancers',5),
+    row('b','Saint Josephs Hawks (stud)','Longwood Lancers (stud)',6)
+  ],[p]);
+  const preview=context.aiMergeQueuePreview_();
+  assert.equal(preview.proposals[0].date,'2026-11-05');
+  assert.equal(preview.proposals[0].valid,true);
+  assert.equal(context.aiMergeQueueApply_(['date-format']).mergedGroups,1);
+  assert.equal(sh.Zápasy.rows.length,2);
+}
+const userScript=fs.readFileSync('LiveBasketbalAutoMerge.user.js','utf8');
+assert.match(userScript,/if \(panel\.style\.display === 'none'\) aiPreview\(\)/);
+assert.match(userScript,/request\('aiMerge\.apply', batch\)/);
+assert.match(userScript,/@author       LM/);
+testDateCellIsDateObject();
 testNoImplicitApplyAndManualReview();
 testOnlySelectedGroupAndStaleProposal();
 testCekaStatusIsPending();
