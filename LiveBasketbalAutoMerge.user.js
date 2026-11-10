@@ -127,7 +127,6 @@
     const h = el('div', '', 'head');
     h.append(el('strong', 'Párování LIVE basketbalu'),
       button('🤖 AI fronta', aiPreview),
-      button('AI fronta', aiPreview),
       button('Nastavení', () => configure()),
       button('✕', () => { panel.style.display = 'none'; }));
     panel.append(h);
