@@ -56,6 +56,7 @@ function scheduledDeduplicateDay_(ss, day) {
   const total = sheet.getLastRow()-1;
   if (total < 1) return {day, merged:0, more:false};
   const all = sheet.getRange(2, 1, total, 13).getValues();
+  const readMs = Date.now() - started;
   const localToGlobal = [];
   const localRows = [];
   for (let i=0; i<all.length; i++) {
@@ -74,12 +75,16 @@ function scheduledDeduplicateDay_(ss, day) {
     if (toLocal.has(from) && toLocal.has(target))
       localLinks.set(toLocal.get(from), toLocal.get(target));
   }
+  const linksMs = Date.now() - started - readMs;
   const stamp = Utilities.formatDate(new Date(),'Europe/Prague','yyyy-MM-dd HH:mm:ss');
   const plan = planHistoricalDeduplication_(localRows, stamp, localLinks,
     {maxDeleted:HIST_DEDUPE_MAX_DELETES,maxGroups:HIST_DEDUPE_MAX_GROUPS});
+  const analysisMs = Date.now() - started - readMs - linksMs;
   // Fail before ANY write if matching took too long.
   if (Date.now()-started > 210000)
-    throw new Error('Deduplikační analýza přesáhla bezpečný časový limit.');
+    throw new Error('Deduplikace ' + day + ': bezpečný limit 210 s. ' +
+      'Čtení ' + readMs + ' ms, historické vazby ' + linksMs +
+      ' ms, párování ' + analysisMs + ' ms.');
 
   // Use original sheet coordinates before deletion. Never delete by guessed
   // fixture names or mutable "Řádky při analýze" from the AI queue.
@@ -113,5 +118,6 @@ function scheduledDeduplicateDay_(ss, day) {
   const more = plan.deferredGroups > 0;
   return {day, checked:localRows.length, merged:plan.merged,
     review:plan.reviewCandidates, archived:archive.length,
-    deferredGroups:plan.deferredGroups, more, milliseconds:Date.now()-started};
+    deferredGroups:plan.deferredGroups, more, milliseconds:Date.now()-started,
+    readMs, linksMs, analysisMs, writeMs:Date.now()-started-readMs-linksMs-analysisMs};
 }
