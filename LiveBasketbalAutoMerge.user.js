@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LIVE basketbal - kontrola a sloučení duplicit
 // @namespace    live-basketbal-collector
-// @version      1.1.2
+// @version      1.2.0
 // @author       LM
 // @license      MIT
 // @description  Bezpečný náhled a potvrzené sloučení duplicit v Google Sheets.
@@ -33,7 +33,10 @@
     '#lm-auto-merge .muted{color:#a1a1aa;font-size:12px}',
     '#lm-auto-merge .actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 0}',
     '#lm-auto-merge .good{color:#86efac}',
-    '#lm-auto-merge .warn{color:#fcd34d}'
+    '#lm-auto-merge .warn{color:#fcd34d}',
+    '#lm-auto-merge .games{white-space:pre-line;padding:5px 0;font-size:12px}',
+    '#lm-auto-merge .bad{color:#fca5a5}',
+    '#lm-auto-merge .item:has(input:disabled){opacity:.65}'
   ].join('');
   document.head.appendChild(style);
   const root = document.createElement('div');
@@ -43,7 +46,7 @@
   panel.style.display = 'none';
   const launch = document.createElement('button');
   launch.className = 'launch';
-  launch.textContent = '🔗 AUTO SPOJENÍ';
+  launch.textContent = '🤖 AI PÁROVÁNÍ';
   root.append(panel, launch);
   document.body.appendChild(root);
   let proposals = [];
@@ -124,7 +127,7 @@
     const h = el('div', '', 'head');
     h.append(el('strong', 'Párování LIVE basketbalu'),
       button('🤖 AI fronta', aiPreview),
-      button('Pravidla', preview),
+      button('AI fronta', aiPreview),
       button('Nastavení', () => configure()),
       button('✕', () => { panel.style.display = 'none'; }));
     panel.append(h);
@@ -139,59 +142,131 @@
     busy = true;
     panel.style.display = '';
     header();
-    status('Načítám AI frontu z listu AI sloučení…');
+    status('Načítám návrhy z listu AI sloučení…');
     try {
       const data = await request('aiMerge.preview');
+      const groups = Array.isArray(data.proposals) ? data.proposals : [];
+      const eligible = groups.filter(p => p.valid);
+      const selected = new Set();
       header();
-      status('AI připravila ' + data.auto + ' jistějších skupin ke sloučení. ' +
-        data.review + ' skupin čeká na tvoji kontrolu. ' +
-        data.processed + ' již vyřízeno. ' +
-        (data.removable || 0) + ' kombinovaných řádků s / k odstranění.');
-      status('Čísla řádků se nepoužívají – při sloučení se hledá podle klíčů. ' +
-        'Neplatné, ztracené nebo konfliktní skupiny se přeskočí.');
+      status('Připraveno ' + data.auto + ' skupin SLOUČIT, ' +
+        data.review + ' skupin PROVĚŘIT. Nedostupných po předchozím čištění: ' +
+        (data.stale || 0) + '. Vyřízených: ' + data.processed + '.');
+      status('Pouze výslovně označené skupiny se sloučí. Každá se před změnou ' +
+        'ověří podle stabilních klíčů; originály se archivují. ' +
+        'PROVĚŘIT vyžaduje tvoji kontrolu.');
       const actions = el('div', '', 'actions');
-      const merge = button('🤖 Sloučit jisté (' + data.auto +
-        ') + vyřadit kombinované (' + (data.removable || 0) + ')', async () => {
-        if (busy || (!data.auto && !data.removable)) return;
-        if (!confirm('Spojit ' + data.auto + ' skupin označených AI jako SLOUČIT ' +
-          'a vyřadit ' + (data.removable || 0) + ' kombinovaných zápisů s lomítky? ' +
-          'Sporné skupiny zůstanou k prověření. Všechny původní řádky se archivují.')) return;
+      const apply = button('Sloučit označené (0)', async () => {
+        if (busy || !selected.size) return;
+        const picked = groups.filter(p => selected.has(p.id));
+        const uncertain = picked.filter(p => p.level === 'PROVĚŘIT').length;
+        if (!confirm('Opravdu sloučit ' + picked.length + ' VYBRANÝCH skupin?' +
+          (uncertain ? ' Mezi nimi je ' + uncertain +
+          ' skupin označených PROVĚŘIT, které musíš mít ověřené!' : '') +
+          ' Originální záznamy budou archivovány. ' +
+          'Konfliktní nebo chybějící zápasy se nepřipojí.')) return;
         busy = true;
-        merge.disabled = true;
+        apply.disabled = true;
+        const totals = {groups:0, removed:0, blocked:0};
+        let errors = '';
         try {
-          const totals = {groups: 0, rows: 0, combined: 0, blocked: 0};
-          let remaining = 1;
-          for (let pass = 0; pass < 6 && remaining > 0; pass++) {
-            const res = await request('aiMerge.apply');
+          const ids = picked.map(p => p.id);
+          for (let i=0; i<ids.length; i+=3) {
+            const batch = ids.slice(i,i+3);
+            const res = await request('aiMerge.apply', batch);
             totals.groups += res.mergedGroups || 0;
-            totals.rows += res.removedRows || 0;
-            totals.combined += res.removedComposites || 0;
+            totals.removed += res.removedRows || 0;
             totals.blocked += res.blocked || 0;
-            remaining = res.remainingAuto || 0;
-            // No progress: avoid a retry loop on a stale/broken queue.
-            if (!res.mergedGroups && !res.blocked) break;
+            const progress = status('Zpracováno ' +
+              Math.min(i+3, ids.length) + '/' + ids.length +
+              ' skupin; spojeno ' + totals.groups + ', blokováno ' +
+              totals.blocked + '.');
+            progress.scrollIntoView({block:'nearest'});
           }
-          alert('AI sloučení: ' + totals.groups + ' skupin, odstraněno ' +
-            totals.rows + ' řádků (z toho kombinovaných ' +
-            totals.combined + '). Zablokováno: ' + totals.blocked +
-            (remaining ? '. Některé návrhy zůstaly ve frontě.' : '') +
-            '. Podrobnosti najdeš v listu AI sloučení.');
-          busy = false;
-          await aiPreview();
         } catch (e) {
-          alert('Sloučení selhalo: ' + e.message);
+          errors = e.message;
         } finally {
           busy = false;
-          merge.disabled = false;
         }
+        alert('AI fronta: spojeno ' + totals.groups + ' skupin, odstraněno ' +
+          totals.removed + ' duplicitních řádků, zablokováno ' +
+          totals.blocked + '.' +
+          (errors ? ' Běh se přerušil: ' + errors +
+          '. Před dalším pokusem ověř stav v listu AI sloučení.' : ''));
+        await aiPreview();
       });
-      merge.disabled = !data.auto && !data.removable;
-      actions.append(merge, button('Aktualizovat frontu', aiPreview));
+      const update = () => {
+        apply.textContent = 'Sloučit označené (' + selected.size + ')';
+        apply.disabled = !selected.size;
+      };
+      actions.append(
+        apply,
+        button('Označit jistější', () => {
+          for (const p of eligible) if (p.level === 'SLOUČIT') selected.add(p.id);
+          for (const cb of panel.querySelectorAll('input[data-group]'))
+            cb.checked = selected.has(cb.dataset.group);
+          update();
+        }),
+        button('Odznačit vše', () => {
+          selected.clear();
+          for (const cb of panel.querySelectorAll('input[data-group]'))
+            cb.checked = false;
+          update();
+        }),
+        button('Obnovit', aiPreview)
+      );
       panel.append(actions);
+      if (data.removable > 0) {
+        const clean = button('Vyřadit kombinované řádky s / (' +
+          data.removable + ')', async () => {
+          if (busy || !confirm('Archivovat a odstranit pouze umělé ' +
+            'kombinované 1xBit řádky se dvěma nebo více zápasy?' +
+            ' Tato operace je oddělená od spojování skupin.')) return;
+          busy = true;
+          clean.disabled = true;
+          try {
+            const res = await request('aiMerge.cleanComposites');
+            alert('Archivováno a odstraněno: ' + res.removedRows +
+              '. Zbývá: ' + res.remaining + '.');
+          } catch (e) {
+            alert('Nepodařilo se dokončit: ' + e.message);
+          } finally {
+            busy = false;
+          }
+          await aiPreview();
+        });
+        panel.append(clean);
+      }
+      if (!groups.length) status('Ve frontě už nejsou nevyřízené návrhy. ✅', 'good');
+      for (const p of groups) {
+        const line = el('label', '', 'item');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.dataset.group = p.id;
+        cb.disabled = !p.valid;
+        cb.addEventListener('change', () => {
+          if (cb.checked) selected.add(p.id);
+          else selected.delete(p.id);
+          update();
+        });
+        const desc = el('div');
+        desc.append(el('div', p.id + ' • ' + p.date +
+          ' • ' + (p.level === 'SLOUČIT' ? 'JISTĚJŠÍ' : 'PROVĚŘIT') +
+          ' • ' + p.size + ' řádky',
+          p.valid ? (p.level === 'SLOUČIT' ? 'good' : 'warn') : 'bad'));
+        desc.append(el('div', p.matches || '(bez popisu)', 'games'));
+        desc.append(el('div', p.reason || '', 'muted'));
+        if (!p.valid)
+          desc.append(el('div', 'NEDOSTUPNÉ: ' + p.problem, 'bad'));
+        line.append(cb, desc);
+        panel.append(line);
+      }
+      update();
     } catch (e) {
       header();
       status(e.message, 'warn');
-      panel.append(button('Znovu načíst AI frontu', aiPreview));
+      status('Zkontroluj URL, MERGE_KEY a novou verzi nasazení Apps Scriptu.');
+      panel.append(button('Zkusit znovu', aiPreview));
     } finally {
       busy = false;
     }
@@ -273,7 +348,7 @@
     await preview();
   }
   launch.addEventListener('click', () => {
-    if (panel.style.display === 'none') preview();
+    if (panel.style.display === 'none') aiPreview();
     else panel.style.display = 'none';
   });
 })();
