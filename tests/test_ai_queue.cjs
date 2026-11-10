@@ -133,17 +133,41 @@ function testSlashCompositeArchivedDeletedOnlyOnApply() {
   assert.equal(sheets['Archiv duplicit'].rows[1][3],'REMOVED MULTI-FIXTURE');
   assert.equal(context.aiMergeQueuePreview_().removable,0);
 }
-function testSourceOverlapBlocksMergeAndCompositeFilter() {
+function testSourceOverlapAllowedWithManualSelection() {
   const sh=mock([
     row('a','Boston College Eagles','Wagner Seahawks',7),
     row('b','Boston College','Wagner Seahawks',7)
   ],[plan('g',['a','b'],[false])]);
-  assert.equal(context.aiMergeQueueApply_(['g']).mergedGroups,0);
-  assert.equal(sh['AI sloučení'].rows[1][9],'BLOKOVÁNO');
+  const preview=context.aiMergeQueuePreview_();
+  assert.equal(preview.proposals[0].valid,true);
+  assert.equal(context.aiMergeQueueApply_(['g']).mergedGroups,1);
+  assert.equal(sh['AI sloučení'].rows[1][9],'SLOUČENO');
+  assert.equal(sh.Zápasy.rows.length,2);
+  assert.equal(sh['Archiv duplicit'].rows.length,3);
   assert.equal(context.multipleFixtureListing_('A/B','C/D'),false);
   assert.equal(context.multipleFixtureListing_('Lakers/Bulls','Jazz/Celtics'),true);
   assert.equal(context.multipleFixtureListing_('ABC/DEF','Bulls'),false);
 }
+function testFemeninaLeagueAndConflictingEventIds() {
+  const a=row('a','CD Sergio Ceppi','CD Colegio Los Leones',5);
+  const b=row('b','CD Sergio Ceppi','CD Colegio Los Leones',5);
+  a[2]='Chile / Liga Femenina, ženy';
+  b[2]='Liga Femenina';
+  const sh=mock([a,b],[plan('femenina',['a','b'],[false])]);
+  assert.equal(context.fixtureClass_(a[2],a[3],a[4]),'adult|women');
+  assert.equal(context.fixtureClass_(b[2],b[3],b[4]),'adult|women');
+  assert.equal(context.aiMergeQueuePreview_().proposals[0].valid,true);
+  assert.equal(context.aiMergeQueueApply_(['femenina']).mergedGroups,1);
+
+  const x=row('x','Piratas de Bogota','Toros Del Valle',5,'sr:match:11111111');
+  const y=row('y','Piratas de Bogota','Toros Del Valle',5,'sr:match:22222222');
+  const conflicts=mock([x,y],[plan('ids',['x','y'],[false])]);
+  assert.equal(context.aiMergeQueuePreview_().proposals[0].valid,false);
+  assert.match(context.aiMergeQueuePreview_().proposals[0].problem,/Konfliktní SportRadar ID/);
+  assert.equal(context.aiMergeQueueApply_(['ids']).mergedGroups,0);
+  assert.equal(conflicts.Zápasy.rows.length,3);
+}
+
 function testCekaStatusIsPending() {
   const waiting=plan('gčeká',['a','b'],[false]);
   waiting[9]='ČEKÁ';
@@ -213,5 +237,6 @@ testStableKeyTripleAndArchive();
 testReversedAlias();
 testConflictingIdsAndDatesBlocked();
 testSlashCompositeArchivedDeletedOnlyOnApply();
-testSourceOverlapBlocksMergeAndCompositeFilter();
+testSourceOverlapAllowedWithManualSelection();
+testFemeninaLeagueAndConflictingEventIds();
 console.log('AI queue: 5 grouped merge, archived delete and safety tests passed');
