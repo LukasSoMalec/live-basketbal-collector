@@ -591,6 +591,33 @@ function testTeamAliasesNeverOverrideConflictingVerifiedIds() {
     'San Sebastian College','Mapua Cardinals','Philippines. NCAA',youth,''),false);
 }
 
+function testScheduledBatchKeepsDayWithDeferredGroups() {
+  const inputs=[];
+  for (let i=0; i<16; i++) {
+    const id='sr:match:'+(80000000+i);
+    const a=row('USA / NCAA','Alpha Club '+i,'Beta Club '+i,5,id);
+    const b=row('USA / NCAA','Alpha Club '+i,'Beta Club '+i,6,id);
+    a[0]='home-'+i;
+    b[0]='away-'+i;
+    inputs.push(a,b);
+  }
+  const sheets={Zápasy:new FakeSheet([Array(13).fill('HEADER'),...inputs])};
+  const ss={
+    getSheetByName:name=>sheets[name]||null,
+    insertSheet:name=>(sheets[name]=new FakeSheet())
+  };
+  const first=context.scheduledDeduplicateDay_(ss,date);
+  assert.equal(first.merged,15);
+  assert.equal(first.deferredGroups,1);
+  assert.equal(first.more,true);
+  assert.equal(sheets.Zápasy.getLastRow(),18);
+  const second=context.scheduledDeduplicateDay_(ss,date);
+  assert.equal(second.merged,1);
+  assert.equal(second.deferredGroups,0);
+  assert.equal(second.more,false);
+  assert.equal(sheets.Zápasy.getLastRow(),17);
+}
+testScheduledBatchKeepsDayWithDeferredGroups();
 testMultipleAliasesMergeAndAudit();
 testKnownIdOverridesNameDifferenceButNotGender();
 testConflictAndCategoriesRemainSeparateAndFlagged();
