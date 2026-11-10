@@ -296,8 +296,8 @@ function chooseHistoricalMaster_(rows, members) {
 // by sameTeam_(). All candidates are still revalidated by sameHistoricalFixture_.
 // WNBL aliases are indexed only as additional possible candidates; the final
 // comparison validates that BOTH competitions really are WNBL.
-function historicalTeamKey_(team, league, ignoreWomen) {
-  const value = /\bwnbl\b/.test(normLeague_(league))
+function historicalTeamKey_(team, league, ignoreWomen, allowAlias = true) {
+  const value = allowAlias && /\bwnbl\b/.test(normLeague_(league))
     ? fixtureTeamAlias_(team, league) : team;
   const words = teamWords_(value, ignoreWomen);
   const protectedWords = new Set(['women', 'woman', 'w', 'men', 'u18',
@@ -307,12 +307,14 @@ function historicalTeamKey_(team, league, ignoreWomen) {
   return teamCore_(value, ignoreWomen) + '#' + sig;
 }
 
-function historicalPairKey_(row) {
+function historicalPairKeys_(row) {
   const cls = fixtureClass_(row[2], row[3], row[4]);
   const isWomen = cls.endsWith('|women');
-  const teams = [historicalTeamKey_(row[3], row[2], isWomen),
-    historicalTeamKey_(row[4], row[2], isWomen)].sort();
-  return teams.join('||');
+  const keys = [true, false].map(alias => [
+    historicalTeamKey_(row[3], row[2], isWomen, alias),
+    historicalTeamKey_(row[4], row[2], isWomen, alias)
+  ].sort().join('||'));
+  return [...new Set(keys)];
 }
 
 function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map(), limits = {}) {
@@ -340,12 +342,12 @@ function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map(), li
     }
     for (const ix of indices) {
       const r = rows[ix];
-      const pair = historicalPairKey_(r);
+      const pairs = historicalPairKeys_(r);
       const srid = eventId_(r[12]);
       const opaque = rowFootballOpaqueId_(r[12]);
-      pairByIndex.set(ix, pair);
+      pairByIndex.set(ix, pairs);
       const candidates = new Set([
-        ...(byPair.get(pair) || []),
+        ...pairs.flatMap(pair => [...(byPair.get(pair) || [])]),
         ...(srid ? bySrId.get(srid) || [] : []),
         ...(opaque ? byOpaqueId.get(opaque) || [] : [])
       ]);
@@ -366,7 +368,7 @@ function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map(), li
       }
       // Register the entire growing group for all of its members. This
       // includes groups linked through equal ID but different team labels.
-      register(byPair, pair, group);
+      for (const pair of pairs) register(byPair, pair, group);
       register(bySrId, srid, group);
       register(byOpaqueId, opaque, group);
     }
@@ -375,7 +377,7 @@ function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map(), li
     // team pairs could satisfy possibleHistoricalDuplicate_().
     const groupsByPair = new Map();
     for (const group of bucketGroups) {
-      const keys = new Set(group.map(ix => pairByIndex.get(ix)));
+      const keys = new Set(group.flatMap(ix => pairByIndex.get(ix)));
       for (const pair of keys) register(groupsByPair, pair, group);
     }
     const seenPairs = new Set();
