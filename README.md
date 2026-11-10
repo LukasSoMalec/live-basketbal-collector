@@ -34,6 +34,12 @@ Při čistém integračním testu 2026-11-02 v 19:19 se podařilo spojit `AS Pap
 **Nutné jednorázové nasazení:** aktualizovat `GoogleAppsScript.gs` ve stávajícím projektu Apps Script, přidat soubor `ScheduledDedupe.gs`, pak `Nasadit → Spravovat nasazení → Upravit → Nová verze → Nasadit` (zachovat /exec URL). V editoru **jednou ručně spusť** `installScheduledDedupe` a potvrď oprávnění – bez tohoto kroku se samostatná deduplikace automaticky nespustí. Po instalaci můžeš zkusit `runScheduledDedupe` ručně a otevřít Provedení (Executions). Nedávej přímo `planHistoricalDeduplication_` do triggeru. GitHub workflow nikdy samo nenahraje nový kód do Apps Scriptu.
 
 
+### Výkonnostní oprava pro velké dny (10. 11. 2026)
+
+Původní historická deduplikace na dni 2026-11-05 překročila bezpečný limit 210 sekund. `GoogleAppsScript.gs` nyní indexuje kandidáty podle normalizovaných dvojic týmů a SportRadar/Football event ID namísto úplného prohledávání všech dvojic. Rozhodovací bezpečnostní pravidla v `sameHistoricalFixture_` a `possibleHistoricalDuplicate_` zůstávají zachována; klíče jsou jen předvýběr kandidátů. `ScheduledDedupe.gs` vrací `readMs`, `linksMs`, `analysisMs` a `writeMs`, takže lze z protokolu rozlišit náročné čtení tabulky od výpočtu párování. Regresní test zahrnuje také více než 800 zápasů ve stejném dni.
+
+**Aktivace opravy:** v původním Apps Script projektu nahraď `GoogleAppsScript.gs` a `ScheduledDedupe.gs` nejnovějšími verzemi z repozitáře. Automatický trigger `runScheduledDedupe` už existuje a není potřeba ho znovu vytvářet; pro následný ruční test spusť `runScheduledDedupe`. Pokud předchozí běh překročil limit ještě před zápisem, datumový kurzor se neposunul a znovu se zpracuje tentýž den. Po úpravě hlavního souboru Apps Scriptu aktualizuj i existující nasazení webové aplikace na novou verzi, aby live ingest používal stejný kód.
+
 ### Oddělené background čištění (nové od 10. 11. 2026)
 
 1. **Sběr:** GitHub Actions v HH:10 pošle JSON pouze do `saveSnapshot_`. V této cestě již neprobíhá plánování ani mazání historických duplicit. Stále zůstává konzervativní párování nových LIVE zápasů a učení potvrzených aliasů.
