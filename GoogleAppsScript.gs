@@ -292,7 +292,7 @@ function chooseHistoricalMaster_(rows, members) {
   })[0];
 }
 
-function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map()) {
+function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map(), limits = {}) {
   // Group only within the same match day and youth/women category.
   const buckets = new Map();
   rows.forEach((r, ix) => {
@@ -367,8 +367,12 @@ function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map()) {
   const archive = [];
   const masterByIndex = new Map(rows.map((_, ix) => [ix, ix]));
   let merged = 0;
+  let mergedGroups = 0;
+  const maxDeleted = Number.isFinite(limits.maxDeleted) ? limits.maxDeleted : Infinity;
+  const maxGroups = Number.isFinite(limits.maxGroups) ? limits.maxGroups : Infinity;
   for (const group of groups) {
     if (group.length < 2) continue;
+    if (merged + group.length - 1 > maxDeleted || mergedGroups >= maxGroups) continue;
     const ids = new Set(group.map(ix => eventId_(rows[ix][12])).filter(Boolean));
     if (ids.size > 1) {
       group.forEach(ix => flagged.add(ix));
@@ -409,6 +413,7 @@ function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map()) {
     if (ids.size === 1 && !eventId_(target[12]))
       target[12] = [...ids][0] + (target[12] ? '; ' + target[12] : '');
     modified.add(master);
+    mergedGroups++;
   }
   const deleted = new Set(deleteIndices);
   let reviewCandidates = 0;
@@ -562,7 +567,7 @@ function manualArchiveLinks_(ss, rows) {
 
   for (const h of history) {
     const role = String(h[3] || '');
-    if (!/^(?:MANUAL|AUTO) MERGED FROM(?: REVERSED)?$/.test(role)) continue;
+    if (!/^(?:(?:MANUAL|AUTO) MERGED FROM(?: REVERSED)?|MERGED FROM)$/.test(role)) continue;
     const targetKey = String(h[1] || '');
     const oldKey = String(h[4] || '');
     const date = matchDateKey_(h[5]);
@@ -883,10 +888,11 @@ function saveSnapshot_(body) {
     touched.add(ix);
   }
 
-  // Retrospectively compare all stored rows, including finished games.
-  // Keep the archive BEFORE removing any duplicate row from the live sheet.
-  const cleanup = planHistoricalDeduplication_(rows, stamp, manualLinks.byExisting);
-  for (const ix of cleanup.modified) touched.add(ix);
+  // Do NOT clean historic rows in a web-app ingest request: the caller has
+  // a short HTTP timeout. runScheduledDedupe() now owns historical cleanup.
+  // Normal incoming fixture matching and validated manual aliases still run.
+  const cleanup = {merged:0, reviewCandidates:0, deleteIndices:[], archive:[],
+    modified:new Set(), masterByIndex:new Map(rows.map((_, ix) => [ix, ix]))};
   const removedIndices = new Set(cleanup.deleteIndices);
   // Distinct source/fixture observations after merging; the same poll must
   // never be counted twice solely because the two sites used different names.
