@@ -14,7 +14,7 @@ function doPost(e) {
     const body = JSON.parse(e.postData.contents || '{}');
     const action = String(body.action || '');
     const isMerge = ['autoMerge.preview', 'autoMerge.apply',
-      'aiMerge.preview', 'aiMerge.apply'].includes(action);
+      'aiMerge.preview', 'aiMerge.apply', 'aiMerge.cleanComposites'].includes(action);
     // A separate, purpose-limited key prevents exposing the ingest key
     // in Tampermonkey. Do not reuse SHEETS_INGEST_KEY for the browser UI.
     const property = isMerge ? 'MERGE_KEY' : 'INGEST_KEY';
@@ -26,7 +26,8 @@ function doPost(e) {
     if (action === 'autoMerge.preview') return json_(autoMergePreview_());
     if (action === 'autoMerge.apply') return json_(autoMergeApply_(body.ids));
     if (action === 'aiMerge.preview') return json_(aiMergeQueuePreview_());
-    if (action === 'aiMerge.apply') return json_(aiMergeQueueApply_());
+    if (action === 'aiMerge.apply') return json_(aiMergeQueueApply_(body.ids));
+    if (action === 'aiMerge.cleanComposites') return json_(aiMergeQueueCleanComposites_());
     return json_(saveSnapshot_(body));
   } catch (err) {
     return json_({ok: false, error: String(err.message || err).slice(0, 300)});
