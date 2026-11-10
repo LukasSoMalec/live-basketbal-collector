@@ -49,6 +49,7 @@ function mock(rows,plans) {
     'AI sloučení':new FakeSheet([headers,...plans])
   };
   context.SpreadsheetApp={
+    flush() {},
     openById:()=>({
       getSheetByName:name=>sheets[name]||null,
       insertSheet:name=>(sheets[name]=new FakeSheet())
@@ -65,7 +66,7 @@ function testStableKeyTripleAndArchive() {
     row('c',"Saint Joseph's Hawks",'Longwood Lancers',7)
   ],[plan('g1',['a','b','c'],[false,false])]);
   assert.equal(context.aiMergeQueuePreview_().auto,1);
-  const r=context.aiMergeQueueApply_();
+  const r=context.aiMergeQueueApply_(['g1']);
   assert.equal(r.mergedGroups,1);
   assert.equal(r.removedRows,2);
   assert.equal(r.removedComposites,0);
@@ -76,14 +77,14 @@ function testStableKeyTripleAndArchive() {
   assert.equal(sh.Zápasy.rows[2][7],'ANO');
   assert.equal(sh['AI sloučení'].rows[1][9],'SLOUČENO');
   assert.equal(sh['Archiv duplicit'].rows.length,4);
-  assert.equal(context.aiMergeQueueApply_().mergedGroups,0);
+  assert.equal(context.aiMergeQueueApply_(['g1']).mergedGroups,0);
 }
 function testReversedAlias() {
   const sh=mock([
     row('a','Boston College Eagles','Wagner Seahawks',5,'sr:match:73138576'),
     row('b','Wagner Seahawks','Boston College',7)
   ],[plan('g2',['a','b'],[true])]);
-  const result=context.aiMergeQueueApply_();
+  const result=context.aiMergeQueueApply_(['g2']);
   assert.equal(result.mergedGroups,1);
   assert.equal(sh['Archiv duplicit'].rows[2][3],'AUTO MERGED FROM REVERSED');
   const aliases=context.manualArchiveLinks_({
@@ -103,7 +104,7 @@ function testConflictingIdsAndDatesBlocked() {
     plan('g2',['a','c'],[true]),
     plan('g3',['a','b'],[true],'PROVĚŘIT')
   ]);
-  const r=context.aiMergeQueueApply_();
+  const r=context.aiMergeQueueApply_(['g1','g2']);
   assert.equal(r.mergedGroups,0);
   assert.equal(r.blocked,2);
   assert.equal(sh.Zápasy.rows.length,4);
@@ -121,8 +122,8 @@ function testSlashCompositeArchivedDeletedOnlyOnApply() {
   const before=context.aiMergeQueuePreview_();
   assert.equal(before.removable,1);
   assert.equal(sheets.Zápasy.rows.length,4);
-  const result=context.aiMergeQueueApply_();
-  assert.equal(result.removedComposites,1);
+  const result=context.aiMergeQueueCleanComposites_();
+  assert.equal(result.removedRows,1);
   assert.equal(result.removedRows,1);
   assert.equal(sheets.Zápasy.rows.length,3);
   assert.equal(sheets.Zápasy.rows[1][0],'real');
@@ -149,9 +150,44 @@ function testCekaStatusIsPending() {
     row('b','Saint Josephs Hawks (stud)','Longwood Lancers (stud)',6)
   ],[waiting]);
   assert.equal(context.aiMergeQueuePreview_().auto,1);
-  assert.equal(context.aiMergeQueueApply_().mergedGroups,1);
+  assert.equal(context.aiMergeQueueApply_(['gčeká']).mergedGroups,1);
   assert.equal(sh['AI sloučení'].rows[1][9],'SLOUČENO');
 }
+function testNoImplicitApplyAndManualReview() {
+  const p=plan('review',['a','b'],[false],'PROVĚŘIT');
+  p[9]='ČEKÁ';
+  const sh=mock([
+    row('a','Saint Josephs Hawks','Longwood Lancers',5),
+    row('b','Saint Josephs Hawks (stud)','Longwood Lancers (stud)',6)
+  ],[p]);
+  assert.throws(()=>context.aiMergeQueueApply_(),/Vyber 1 až 5/);
+  assert.equal(context.aiMergeQueuePreview_().review,1);
+  assert.equal(sh.Zápasy.getLastRow(),3);
+  assert.equal(context.aiMergeQueueApply_(['review']).mergedGroups,1);
+  assert.equal(sh.Zápasy.getLastRow(),2);
+}
+function testOnlySelectedGroupAndStaleProposal() {
+  const sh=mock([
+    row('a','Saint Josephs Hawks','Longwood Lancers',5),
+    row('b','Saint Josephs Hawks (stud)','Longwood Lancers (stud)',6),
+    row('c','Brown Bears','Yale Bulldogs',5),
+    row('d','Brown Bears (stud)','Yale Bulldogs (stud)',7)
+  ],[
+    plan('first',['a','b'],[false]),
+    plan('second',['c','d'],[false]),
+    plan('stale',['no-longer-here','missing'],[false])
+  ]);
+  const before=context.aiMergeQueuePreview_();
+  assert.equal(before.proposals.length,3);
+  assert.equal(before.stale,1);
+  assert.equal(before.proposals.find(p=>p.id==='stale').valid,false);
+  assert.equal(context.aiMergeQueueApply_(['first']).mergedGroups,1);
+  assert.equal(sh.Zápasy.getLastRow(),4);
+  assert.equal(sh['AI sloučení'].rows[2][9],'');
+  assert.equal(context.aiMergeQueuePreview_().auto,2);
+}
+testNoImplicitApplyAndManualReview();
+testOnlySelectedGroupAndStaleProposal();
 testCekaStatusIsPending();
 testStableKeyTripleAndArchive();
 testReversedAlias();
