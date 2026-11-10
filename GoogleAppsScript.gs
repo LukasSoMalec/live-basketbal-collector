@@ -85,7 +85,7 @@ function fixtureClass_(league, home, away) {
   const label = norm_([league, home, away].join(' '));
   const age = label.match(/\bu(?:1[3-9]|2[0-3])\b/)?.[0] || 'adult';
   // WNBL is intrinsically a women's league even when team names omit (Women).
-  const gender = /\b(wnbl|women|woman|zene|zeny|w|wncaa)\b/.test(label)
+  const gender = /\b(wnbl|women|woman|zene|zeny|w|wncaa|femenina|femeninas|feminina|femininas)\b/.test(label)
     ? 'women' : /\b(men|muzi)\b/.test(label) ? 'men' : 'unspecified';
   return age + '|' + gender;
 }
