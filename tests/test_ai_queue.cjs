@@ -141,6 +141,18 @@ function testSourceOverlapBlocksMergeAndCompositeFilter() {
   assert.equal(context.multipleFixtureListing_('Lakers/Bulls','Jazz/Celtics'),true);
   assert.equal(context.multipleFixtureListing_('ABC/DEF','Bulls'),false);
 }
+function testCekaStatusIsPending() {
+  const waiting=plan('gčeká',['a','b'],[false]);
+  waiting[9]='ČEKÁ';
+  const sh=mock([
+    row('a','Saint Josephs Hawks','Longwood Lancers',5,'sr:match:74064538'),
+    row('b','Saint Josephs Hawks (stud)','Longwood Lancers (stud)',6)
+  ],[waiting]);
+  assert.equal(context.aiMergeQueuePreview_().auto,1);
+  assert.equal(context.aiMergeQueueApply_().mergedGroups,1);
+  assert.equal(sh['AI sloučení'].rows[1][9],'SLOUČENO');
+}
+testCekaStatusIsPending();
 testStableKeyTripleAndArchive();
 testReversedAlias();
 testConflictingIdsAndDatesBlocked();
