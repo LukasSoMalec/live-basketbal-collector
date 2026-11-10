@@ -115,22 +115,57 @@ function aiMergePending_(status) {
 function aiMergeQueuePreview_() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const q = aiMergeQueueRead_(ss);
-  let auto=0, review=0, done=0, blocked=0;
+  const games = ss.getSheetByName('Zápasy');
+  if (!games) throw new Error('Chybí záložka Zápasy.');
+  const count = games.getLastRow();
+  const rows = count > 1 ? games.getRange(2, 1, count - 1, 13).getValues() : [];
+  const index = new Map();
+  for (let i = 0; i < rows.length; i++) {
+    const key = String(rows[i][0] || '');
+    if (index.has(key)) index.set(key, -1);
+    else if (key) index.set(key, i);
+  }
+  let auto = 0, review = 0, processed = 0, other = 0, stale = 0;
+  const proposals = [];
+  const seenIds = new Set();
   for (const r of q.rows) {
+    const id = String(r[0] || '').trim();
+    if (!id) continue;
     if (!aiMergePending_(r[9])) {
-      done++;
+      processed++;
       continue;
     }
-    if (String(r[1] || '').trim() === 'SLOUČIT') auto++;
-    else if (String(r[1] || '').trim() === 'PROVĚŘIT') review++;
-    else if (r[0]) blocked++;
+    const level = String(r[1] || '').trim();
+    if (level === 'SLOUČIT') auto++;
+    else if (level === 'PROVĚŘIT') review++;
+    else { other++; continue; }
+    let problem = '';
+    let size = 0;
+    try {
+      if (seenIds.has(id)) throw new Error('Opakované ID skupiny.');
+      const parsed = aiMergeQueueDecode_(r);
+      const keys = [parsed.key, ...parsed.others];
+      size = keys.length;
+      const indices = keys.map(k => index.get(k));
+      if (indices.some(i => i === undefined || i < 0))
+        throw new Error('Chybějící nebo nejednoznačný klíč po předchozím sloučení.');
+      problem = aiMergeSafety_(indices.map(i => rows[i]), r[2]);
+    } catch (e) {
+      problem = String(e.message || e);
+    }
+    seenIds.add(id);
+    if (problem) stale++;
+    proposals.push({
+      id, level, date: String(r[2] || ''),
+      matches: String(r[7] || '').slice(0, 1200),
+      reason: String(r[8] || '').slice(0, 400),
+      size, valid: !problem, problem: problem.slice(0, 300)
+    });
   }
-  const games=ss.getSheetByName('Zápasy');
-  const count=games ? games.getLastRow() : 0;
-  const legacy=count>1 ? games.getRange(2,1,count-1,13).getValues() : [];
-  const removable=legacy.filter(aiMergeRemovableComposite_).length;
-  return {ok:true, auto, review, processed:done, other:blocked,
-    removable, message:'Pro sloučení se používají klíče, nikoli čísla řádků.'};
+  const removable = rows.filter(aiMergeRemovableComposite_).length;
+  return {ok:true, auto, review, processed, other, stale, removable,
+    proposals, totalRows:rows.length,
+    message:'Výběr skupin je ruční; každé sloučení se znovu ověří podle stabilních klíčů.'};
 }
 
 function aiMergeQueueApply_() {
