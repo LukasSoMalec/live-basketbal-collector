@@ -3,7 +3,10 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const context = {
   console,
-  Utilities: {formatDate: value => new Date(value).toISOString().replace('T',' ').slice(0,19)}
+  Utilities: {formatDate: (value,tz,fmt) => {
+    const iso=new Date(value).toISOString();
+    return fmt==='yyyy-MM-dd' ? iso.slice(0,10) : iso.replace('T',' ').slice(0,19);
+  }}
 };
 vm.createContext(context);
 for (const path of ['GoogleAppsScript.gs', 'AIQueueMerge.gs'])
