@@ -368,11 +368,20 @@ function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map(), li
   const masterByIndex = new Map(rows.map((_, ix) => [ix, ix]));
   let merged = 0;
   let mergedGroups = 0;
+  let deferredGroups = 0;
   const maxDeleted = Number.isFinite(limits.maxDeleted) ? limits.maxDeleted : Infinity;
   const maxGroups = Number.isFinite(limits.maxGroups) ? limits.maxGroups : Infinity;
   for (const group of groups) {
     if (group.length < 2) continue;
-    if (merged + group.length - 1 > maxDeleted || mergedGroups >= maxGroups) continue;
+    if (group.length - 1 > maxDeleted) {
+      // Too large for one safe batch: escalate for human review, not an endless retry.
+      group.forEach(ix => flagged.add(ix));
+      continue;
+    }
+    if (merged + group.length - 1 > maxDeleted || mergedGroups >= maxGroups) {
+      deferredGroups++;
+      continue;
+    }
     const ids = new Set(group.map(ix => eventId_(rows[ix][12])).filter(Boolean));
     if (ids.size > 1) {
       group.forEach(ix => flagged.add(ix));
@@ -429,7 +438,7 @@ function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map(), li
   }
   return {
     deleteIndices: deleteIndices.sort((a, b) => b - a),
-    modified, masterByIndex, archive, merged, reviewCandidates
+    modified, masterByIndex, archive, merged, reviewCandidates, deferredGroups
   };
 }
 
