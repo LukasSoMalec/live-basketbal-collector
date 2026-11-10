@@ -1,6 +1,15 @@
 name: LIVE basketbal - 4 sazkovky
 on:
+  schedule:
+    - cron: '10 * * * *'
+      timezone: 'Europe/Prague'
   workflow_dispatch:
+    inputs:
+      manual_confirm:
+        description: 'Potvrd ruční spuštění (starý externí cron bez potvrzení se ignoruje)'
+        required: true
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -8,15 +17,15 @@ concurrency:
   cancel-in-progress: false
 jobs:
   collect:
+    if: github.event_name == 'schedule' || inputs.manual_confirm == true
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       SHEETS_WEBAPP_URL: ${{ secrets.SHEETS_WEBAPP_URL }}
       SHEETS_INGEST_KEY: ${{ secrets.SHEETS_INGEST_KEY }}
     steps:
       - uses: actions/checkout@v4
       - name: Check destination configuration
-        if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           if [[ -z "$SHEETS_WEBAPP_URL" || -z "$SHEETS_INGEST_KEY" ]]; then
@@ -48,7 +57,6 @@ jobs:
       - name: Run parser tests
         run: python -m unittest discover -s tests -v
       - name: Collect and update sheet
-        if: github.event_name == 'workflow_dispatch'
         run: python collector.py
       - name: Save last snapshot
         if: always()
