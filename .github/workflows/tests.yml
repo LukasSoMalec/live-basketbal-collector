@@ -2,6 +2,7 @@ name: Collector regression tests
 on:
   push:
     paths:
+      - 'collector.py'
       - 'GoogleAppsScript.gs'
       - 'ScheduledDedupe.gs'
       - 'AIQueueMerge.gs'
@@ -56,4 +57,15 @@ jobs:
       - run: node tests/test_apps_script_dedupe.cjs
       - run: node tests/test_auto_merge.cjs
       - run: node tests/test_ai_queue.cjs
+      - name: Validate collector syntax and timeout safety
+        run: |
+          python -m py_compile collector.py
+          python - <<'PY'
+          from pathlib import Path
+          code = Path("collector.py").read_text(encoding="utf-8")
+          assert 'httpx.Timeout(330.0, connect=30.0, write=30.0, pool=30.0)' in code
+          assert 'except httpx.ReadTimeout:' in code
+          assert code.count('await client.post(url, json={**data, "key": key})') == 1
+          print("Collector wait window and non-replay protection verified")
+          PY
       - run: python -m unittest discover -s tests -v
