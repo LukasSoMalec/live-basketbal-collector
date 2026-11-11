@@ -23,24 +23,24 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: pip install -r requirements.txt
-      - name: Validate hourly backup scheduler
+      - name: Validate cron-job.org-only dispatcher
         run: |
           python -m pip install --quiet PyYAML
           python - <<'PY'
-          import yaml, subprocess
+          import yaml
           with open('.github/workflows/live-basketball.yml') as f:
               workflow=yaml.safe_load(f)
+          triggers=workflow.get('on',workflow.get(True))
+          assert set(triggers)=={'workflow_dispatch'}, triggers
           job=workflow['jobs']['collect']
-          assert job['permissions'] if 'permissions' in job else workflow['permissions']['actions']=='read'
+          assert job['concurrency'] if 'concurrency' in job else workflow['concurrency']['cancel-in-progress'] is False
           steps=job['steps']
-          assert steps[0]['id']=='gate'
-          assert 'Collect and update sheet' in steps[0]['run']
-          assert '.conclusion == "success"' in steps[0]['run']
-          subprocess.run(['bash','-n'],input=steps[0]['run'],text=True,check=True)
-          assert any('collector.py' in str(s.get('run','')) and
-                     s.get('if')=="steps.gate.outputs.collect == 'true'"
-                     for s in steps)
-          print('Hourly schedule, backup gate and Bash syntax validated')
+          assert not any('gate' in str(step.get('if','')) for step in steps)
+          assert not any('Choose scheduled' in step.get('name','') for step in steps)
+          assert any(step.get('name')=='Check destination configuration' for step in steps)
+          assert any(step.get('name')=='Collect and update sheet' and step.get('run')=='python collector.py' and not step.get('if') for step in steps)
+          assert any(step.get('name')=='Save last snapshot' and step.get('if')=='always()' for step in steps)
+          print('Only cron-job.org workflow_dispatch triggers collection; no skip gate')
           PY
       - name: Cache Playwright browser
         id: playwright-cache
