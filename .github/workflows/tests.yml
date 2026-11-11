@@ -34,6 +34,8 @@ jobs:
           assert job['permissions'] if 'permissions' in job else workflow['permissions']['actions']=='read'
           steps=job['steps']
           assert steps[0]['id']=='gate'
+          assert 'Collect and update sheet' in steps[0]['run']
+          assert '.conclusion == "success"' in steps[0]['run']
           subprocess.run(['bash','-n'],input=steps[0]['run'],text=True,check=True)
           assert any('collector.py' in str(s.get('run','')) and
                      s.get('if')=="steps.gate.outputs.collect == 'true'"
