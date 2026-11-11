@@ -6,7 +6,7 @@ Sběr veřejné LIVE basketbalové nabídky ze SynotTipu, Football.com, Fonbetu 
 
 ## Plánované spouštění
 
-GitHub Actions plánuje sběr **jednou za hodinu přibližně v HH:10 Europe/Prague** (`cron: '10 * * * *'`, `timezone: Europe/Prague`). GitHub ale může plánovaný běh zpozdit či vynechat. **Stávající cron-job.org nyní NESMÍŠ vypínat:** požadavek kolem HH:30 slouží jako záloha, pokud v dané pražské hodině ještě neproběhl žádný úspěšný sběr. Požadavky kolem HH:00/15/45 se ignorují. Záloha před během kontroluje historii úspěšných GitHub Actions běhů, aby se v jedné hodině sběr neduplikoval. Pro okamžitý ruční test použij GitHub Actions a zaškrtni `manual_confirm`. Limit jednoho běhu je 20 minut. Výsledek ověříš v GitHub Actions a v listu `Kontroly`.
+**Jediný plánovač je cron-job.org**, který již posílá `workflow_dispatch` požadavek do GitHub Actions každých **15 minut** (přibližně v HH:00, :15, :30, :45). GitHub nemá vlastní `schedule` trigger ani filtr `manual_confirm`: každý platný požadavek z cron-job.org nebo ruční spuštění workflow skutečně spustí `collector.py`. Současně se povolí jen jeden běh (`concurrency`, `cancel-in-progress: false`), aby se zápisy nepřekrývaly. Při chybě se krok sběru označí jako neúspěšný; nespoléhej jen na zelený stav workflow, kontroluj krok **Collect and update sheet** a poslední řádek záložky **Kontroly**. Časování a aktivní stav úlohy v cron-job.org se nadále mění tam, ne na GitHubu.
 
 ## Propojení Google Sheets (jednorázově)
 
@@ -16,8 +16,8 @@ Cílová tabulka: https://docs.google.com/spreadsheets/d/1LWy7tTceA-kP_OMSlNRm1c
 2. Apps Script → **Nastavení projektu → Vlastnosti skriptu**: přidej `INGEST_KEY` = silný náhodný soukromý klíč. Nesdílej jej veřejně ani zde v chatu.
 3. Apps Script → **Nasadit → Nové nasazení → Webová aplikace**. „Spustit jako“ nastav **já**, „Kdo má přístup“ **Kdokoli**. Autorizuj přístup a zkopíruj URL končící `/exec`.
 4. GitHub → **Settings → Secrets and variables → Actions → Secrets**: přidej `SHEETS_WEBAPP_URL` = URL z kroku 3 a `SHEETS_INGEST_KEY` = přesně stejný soukromý klíč.
-5. GitHub → **Actions → LIVE basketbal - 4 sazkovky → Run workflow → zaškrtni potvrzení ručního spuštění**. Zkontroluj logy, případně artefakt `output/latest.json`, a potvrď zápis do záložek **Kontroly**, **Zdroje**, **Zápasy**.
-6. Po úspěšném testu je hodinový plán (:10) v GitHub Actions aktivovaný. Průběh sleduj v **Actions** a výsledky kontroluj v Google Sheets. Žádnou proměnnou `ENABLE_LIVE_COLLECTOR` už není nutné nastavovat.
+5. GitHub → **Actions → LIVE basketbal - 4 sazkovky → Run workflow**. Není potřeba potvrzovací parametr. Zkontroluj logy, případně artefakt `output/latest.json`, a potvrď zápis do záložek **Kontroly**, **Zdroje**, **Zápasy**.
+6. Stávající úlohu **cron-job.org nech zapnutou každých 15 minut**, volající GitHub Actions `workflow_dispatch` se stávajícím tokenem a `ref: main`. GitHub Actions už nemá vlastní časový plán. Průběh sleduj v **Actions** a výsledky kontroluj v Google Sheets.
 
 Bez přítomnosti obou secrets workflow při ručním spuštění skončí chybou ještě před instalací Pythonu a prohlížeče. Veřejná Apps Script URL nevydává právo k zápisu bez tajného klíče; přesto je tento model nutné chápat jako jednoduchý ingest endpoint, nikoli detailní autentizační systém.
 
@@ -42,7 +42,7 @@ Původní historická deduplikace na dni 2026-11-05 překročila bezpečný limi
 
 ### Oddělené background čištění (nové od 10. 11. 2026)
 
-1. **Sběr:** GitHub Actions v HH:10 pošle JSON pouze do `saveSnapshot_`. V této cestě již neprobíhá plánování ani mazání historických duplicit. Stále zůstává konzervativní párování nových LIVE zápasů a učení potvrzených aliasů.
+1. **Sběr:** cron-job.org každých 15 minut spustí GitHub Actions, které pošlou JSON pouze do `saveSnapshot_`. V této cestě již neprobíhá plánování ani mazání historických duplicit. Stále zůstává konzervativní párování nových LIVE zápasů a učení potvrzených aliasů.
 2. **Historie:** `ScheduledDedupe.gs` obsahuje `runScheduledDedupe`, který získá zámek, prochází jednu datumovou skupinu ze všech fyzických řádků, ověří konfliktní ID/kategorie, omezuje počet sloučení, archivuje původní řádky a teprve pak maže duplicity. Průběžný datumový kurzor je v Script Properties.
 3. **Trigger:** `installScheduledDedupe` vytvoří hodinový time-driven trigger kolem :40 (Google může spustit o ±15 minut jindy); pokryje historické dny postupně. Opakované spuštění instalace nezaloží další kopie téhož triggeru.
 4. **Bezpečnost:** používá stejný `LockService.getScriptLock()` jako webový ingest a ruční slučování. Pokud sběr právě zapisuje, background se přeskočí. Každý běh před mazáním zapisuje do `Archiv duplicit`. `AI sloučení` dál vyžaduje potvrzení uživatele.
@@ -85,7 +85,7 @@ Při potvrzení nové funkce v **AutoMerge.gs** znovu prověří platnost návrh
 4. Do Tampermonkey vlož obsah `LiveBasketbalAutoMerge.user.js`. V Google Sheets otevři tlačítko AUTO SPOJENÍ, jednou zadej `/exec` URL a svůj `MERGE_KEY`.
 5. Vyhodnoť návrhy a potvrď vybraná sloučení. Doporučujeme před prvním použitím mít připravenou Historii verzí.
 
-Klíč je uložen pouze lokálně v Tampermonkey. Nikdy ho nikomu neposílej. Naplánovaný hodinový sběr v HH:10 a jeho GitHub tajný klíč fungují nezávisle na ručním slučování. Slučování probíhá jen na explicitní kliknutí uživatele.
+Klíč je uložen pouze lokálně v Tampermonkey. Nikdy ho nikomu neposílej. Naplánovaný patnáctiminutový sběr přes cron-job.org → GitHub Actions a jeho GitHub tajný klíč fungují nezávisle na ručním slučování. Slučování probíhá jen na explicitní kliknutí uživatele.
 ## Trvalé ruční slučování zápasů
 
 Po ručním sloučení přes `ManualMerge.gs` se původní řádky ukládají do listu `Archiv duplicit` s rolí `MANUAL MERGED FROM`. Nová verze `GoogleAppsScript.gs` tato historická rozhodnutí při každém ingestu znovu načítá: mapuje původní název soutěže a obou týmů (jen pro původní zdroj, který měl `ANO`) na **aktuálně zachovaný zápas**. Zvládá i více navazujících ručních sloučení, například A → B → C. Pokud už se smazaná varianta mezitím znovu objevila, provede navíc retrospektivní úklid včetně archivace, bez ztráty potvrzených `ANO`.
