@@ -12,20 +12,66 @@ on:
         default: false
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: live-basketball
   cancel-in-progress: false
 jobs:
   collect:
-    if: github.event_name == 'schedule' || inputs.manual_confirm == true
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       SHEETS_WEBAPP_URL: ${{ secrets.SHEETS_WEBAPP_URL }}
       SHEETS_INGEST_KEY: ${{ secrets.SHEETS_INGEST_KEY }}
     steps:
+      - name: Choose scheduled, manual or backup collection
+        id: gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MANUAL_CONFIRM: ${{ inputs.manual_confirm }}
+        run: |
+          set -euo pipefail
+          # Explicitly confirmed manual runs always execute.
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${MANUAL_CONFIRM}" == "true" ]]; then
+            echo "collect=true" >> "${GITHUB_OUTPUT}"
+            echo "Confirmed manual collection."
+            exit 0
+          fi
+
+          # The old 15-minute external cron is kept as a safety net.
+          # Only its ~HH:30 invocation is eligible, not HH:00/15/45.
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            minute="$(TZ=Europe/Prague date +%M)"
+            minute=$((10#${minute}))
+            if ((minute < 28 || minute > 40)); then
+              echo "collect=false" >> "${GITHUB_OUTPUT}"
+              echo "Legacy dispatch ignored outside hourly backup window."
+              exit 0
+            fi
+          fi
+
+          # Avoid a duplicate when both the native schedule and external
+          # watchdog fire in the same Prague calendar hour.
+          hour_start="$(TZ=Europe/Prague date '+%Y-%m-%d %H:00:00')"
+          cutoff="$(TZ=Europe/Prague date -d "${hour_start}" +%s)"
+          successful="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/live-basketball.yml/runs?status=success&per_page=30" --jq '.workflow_runs[].created_at')"
+          while IFS= read -r created; do
+            [[ -z "${created}" ]] && continue
+            started="$(date -d "${created}" +%s)"
+            if ((started >= cutoff)); then
+              echo "collect=false" >> "${GITHUB_OUTPUT}"
+              echo "This Prague hour already has a successful collection."
+              exit 0
+            fi
+          done <<< "${successful}"
+
+          echo "collect=true" >> "${GITHUB_OUTPUT}"
+          echo "Starting scheduled/backup collection for this Prague hour."
       - uses: actions/checkout@v4
+        if: steps.gate.outputs.collect == 'true'
       - name: Check destination configuration
+        if: steps.gate.outputs.collect == 'true'
         shell: bash
         run: |
           if [[ -z "$SHEETS_WEBAPP_URL" || -z "$SHEETS_INGEST_KEY" ]]; then
@@ -33,33 +79,42 @@ jobs:
             exit 1
           fi
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.collect == 'true'
         with:
           python-version: '3.12'
           cache: pip
       - run: pip install -r requirements.txt
+        if: steps.gate.outputs.collect == 'true'
       - name: Cache Playwright browser
+        if: steps.gate.outputs.collect == 'true'
         id: playwright-cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-v1-1.55
       - name: Install Chromium
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        if: steps.gate.outputs.collect == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
         run: python -m playwright install chromium
       - name: Test Apps Script matching
+        if: steps.gate.outputs.collect == 'true'
         run: node tests/test_apps_script.cjs
       - name: Test historical duplicate cleanup
+        if: steps.gate.outputs.collect == 'true'
         run: node tests/test_apps_script_dedupe.cjs
       - name: Test Tampermonkey auto merge backend
+        if: steps.gate.outputs.collect == 'true'
         run: node tests/test_auto_merge.cjs
       - name: Test AI queued grouped merges
+        if: steps.gate.outputs.collect == 'true'
         run: node tests/test_ai_queue.cjs
       - name: Run parser tests
+        if: steps.gate.outputs.collect == 'true'
         run: python -m unittest discover -s tests -v
       - name: Collect and update sheet
+        if: steps.gate.outputs.collect == 'true'
         run: python collector.py
       - name: Save last snapshot
-        if: always()
+        if: always() && steps.gate.outputs.collect == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: live-basketball-${{ github.run_id }}
