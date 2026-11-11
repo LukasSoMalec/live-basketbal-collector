@@ -959,8 +959,24 @@ async def main():
     if not url or not key:
         LOG.warning("Missing SHEETS_WEBAPP_URL or SHEETS_INGEST_KEY: DRY RUN, no Sheets write")
         return
-    async with httpx.AsyncClient(follow_redirects=True, timeout=150) as client:
-        res = await client.post(url, json={**data, "key": key})
+    # The Google Apps Script web app can persist rows before its HTTP
+    # acknowledgment is returned. A 150-second read timeout previously marked
+    # a fully saved collection as failed (2026-11-11 17:05 Prague time).
+    # Wait long enough for a slow Apps Script response, but never blindly retry
+    # an ambiguous POST: replaying it could double-count observations.
+    timeout = httpx.Timeout(330.0, connect=30.0, write=30.0, pool=30.0)
+    LOG.info("Submitting snapshot %s to Google Sheets (read timeout: 330s)", data["checkedAt"])
+    async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
+        try:
+            res = await client.post(url, json={**data, "key": key})
+        except httpx.ReadTimeout:
+            LOG.error(
+                "Sheets acknowledgment timed out for checkedAt=%s. The write MAY "
+                "already be committed: check the Kontroly tab before any manual "
+                "replay. Original snapshot preserved in output/latest.json.",
+                data["checkedAt"],
+            )
+            raise
         res.raise_for_status()
         output = res.json()
         if output.get("ok") is not True:
