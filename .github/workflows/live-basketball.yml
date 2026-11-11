@@ -1,5 +1,8 @@
 name: LIVE basketbal - 4 sazkovky
 on:
+  push:
+    paths:
+      - '.github/workflows/live-basketball.yml'
   schedule:
     - cron: '10 * * * *'
       timezone: 'Europe/Prague'
