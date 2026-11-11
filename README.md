@@ -6,7 +6,7 @@ Sběr veřejné LIVE basketbalové nabídky ze SynotTipu, Football.com, Fonbetu 
 
 ## Plánované spouštění
 
-GitHub Actions nyní spouští collector **jednou za hodinu, vždy v HH:10 v čase Europe/Prague** (`cron: '10 * * * *'`, `timezone: Europe/Prague`). Plánovaný start se může na GitHubu opozdit. Limit běhu GitHub jobu je 20 minut. **Starou úlohu na cron-job.org je nutné ručně vypnout**: její volání `workflow_dispatch` bez `manual_confirm: true` už není povoleno spustit sběr. Pro ruční test z GitHub Actions zaškrtni potvrzení `manual_confirm`. Spuštění ověříš na GitHub Actions a v záložce `Kontroly`.
+GitHub Actions plánuje sběr **jednou za hodinu přibližně v HH:10 Europe/Prague** (`cron: '10 * * * *'`, `timezone: Europe/Prague`). GitHub ale může plánovaný běh zpozdit či vynechat. **Stávající cron-job.org nyní NESMÍŠ vypínat:** požadavek kolem HH:30 slouží jako záloha, pokud v dané pražské hodině ještě neproběhl žádný úspěšný sběr. Požadavky kolem HH:00/15/45 se ignorují. Záloha před během kontroluje historii úspěšných GitHub Actions běhů, aby se v jedné hodině sběr neduplikoval. Pro okamžitý ruční test použij GitHub Actions a zaškrtni `manual_confirm`. Limit jednoho běhu je 20 minut. Výsledek ověříš v GitHub Actions a v listu `Kontroly`.
 
 ## Propojení Google Sheets (jednorázově)
 
