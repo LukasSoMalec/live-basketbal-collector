@@ -73,7 +73,11 @@ function normTeam_(text) {
     .replace(/\bzene\b/g, 'women')
     .replace(/\bada blois basket 41\b/g, 'ada blois')
     .replace(/\bsao jose state\b/g, 'san jose state')
-    .replace(/\bsan jose state spartans\b/g, 'san jose state');
+    .replace(/\bsan jose state spartans\b/g, 'san jose state')
+    .replace(/\bsolun\b/g, 'thessaloniki')
+    .replace(/\bmnichov\b/g, 'munich')
+    .replace(/\biii\b/g, '3')
+    .replace(/\bii\b/g, '2');
   const generic = new Set([
     'as', 'bc', 'bk', 'kk', 'sk', 'jk', 'fc', 'ac', 'ao', 'asc',
     'kfum', 'basket', 'baskets', 'basketball', 'club', 'draft', 'allianz'
@@ -84,8 +88,8 @@ function normTeam_(text) {
 function fixtureClass_(league, home, away) {
   const label = norm_([league, home, away].join(' '));
   const age = label.match(/\bu(?:1[3-9]|2[0-3])\b/)?.[0] || 'adult';
-  // WNBL is intrinsically a women's league even when team names omit (Women).
-  const gender = /\b(wnbl|women|woman|zene|zeny|w|wncaa|femenina|femeninas|feminina|femininas)\b/.test(label)
+  // Intrinsically female competitions are recognized even without (Women).
+  const gender = /\b(wnbl|wkbl|wnba|wncaa|bsnf|tauihi|women|woman|zene|zeny|w|femenina|femeninas|feminina|femininas)\b/.test(label)
     ? 'women' : /\b(men|muzi)\b/.test(label) ? 'men' : 'unspecified';
   return age + '|' + gender;
 }
@@ -234,7 +238,7 @@ function exactKey_(date, home, away) {
 // Conservative retrospective deduplication. This runs on every successful
 // ingestion, so matches no longer present in any LIVE feed can still be fixed.
 // A match with different trustworthy Sportradar IDs is NEVER auto-merged.
-function sameHistoricalFixture_(a, b) {
+function sameHistoricalFixture_(a, b, aliases = null) {
   if (matchDateKey_(a[1]) !== matchDateKey_(b[1])) return false;
   const aId = eventId_(a[12]), bId = eventId_(b[12]);
   if (aId && bId && aId !== bId) return false;
@@ -247,7 +251,16 @@ function sameHistoricalFixture_(a, b) {
   const aClass = fixtureClass_(a[2], a[3], a[4]);
   if (aClass !== fixtureClass_(b[2], b[3], b[4])) return false;
   if (aId && bId && aId === bId) return true;
-  return sameFixture_(a[1], a[3], a[4], a[2], b, aId);
+  if (sameFixture_(a[1], a[3], a[4], a[2], b, aId)) return true;
+  if (!aliases) return false;
+  // Use only confirmed, bookmaker-scoped aliases; never invent fuzzy synonyms.
+  for (let i = 0; i < SOURCES.length; i++) {
+    if (a[5+i] === 'ANO' && sameLearnedAliasFixture_(aliases, SOURCES[i],
+      a[1], a[3], a[4], a[2], b, aId)) return true;
+    if (b[5+i] === 'ANO' && sameLearnedAliasFixture_(aliases, SOURCES[i],
+      b[1], b[3], b[4], b[2], a, bId)) return true;
+  }
+  return false;
 }
 
 function comparableStamp_(value) {
@@ -308,17 +321,32 @@ function historicalTeamKey_(team, league, ignoreWomen, allowAlias = true) {
   return teamCore_(value, ignoreWomen) + '#' + sig;
 }
 
-function historicalPairKeys_(row) {
+function historicalPairKeys_(row, aliases = null) {
   const cls = fixtureClass_(row[2], row[3], row[4]);
   const isWomen = cls.endsWith('|women');
   const keys = [true, false].map(alias => [
     historicalTeamKey_(row[3], row[2], isWomen, alias),
     historicalTeamKey_(row[4], row[2], isWomen, alias)
   ].sort().join('||'));
+  // Canonical aliases add candidate index keys, never override validation.
+  if (aliases) {
+    for (let i = 0; i < SOURCES.length; i++) {
+      if (row[5+i] !== 'ANO') continue;
+      const h = canonicalTeamAlias_(aliases, SOURCES[i], row[2], row[3], cls);
+      const a = canonicalTeamAlias_(aliases, SOURCES[i], row[2], row[4], cls);
+      if (!h && !a) continue;
+      if (h && a && h.scope !== a.scope) continue;
+      keys.push([
+        historicalTeamKey_(h ? h.canonical : row[3], row[2], isWomen, false),
+        historicalTeamKey_(a ? a.canonical : row[4], row[2], isWomen, false)
+      ].sort().join('||'));
+    }
+  }
   return [...new Set(keys)];
 }
 
 function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map(), limits = {}) {
+  const aliases = limits.aliases || null;
   // Group only within the same match day and youth/women category.
   const buckets = new Map();
   rows.forEach((r, ix) => {
@@ -343,7 +371,7 @@ function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map(), li
     }
     for (const ix of indices) {
       const r = rows[ix];
-      const pairs = historicalPairKeys_(r);
+      const pairs = historicalPairKeys_(r, aliases);
       const srid = eventId_(r[12]);
       const opaque = rowFootballOpaqueId_(r[12]);
       pairByIndex.set(ix, pairs);
@@ -353,8 +381,8 @@ function planHistoricalDeduplication_(rows, stamp, explicitLinks = new Map(), li
         ...(opaque ? byOpaqueId.get(opaque) || [] : [])
       ]);
       const matching = [...candidates].filter(g =>
-        g.every(j => sameHistoricalFixture_(r, rows[j]) &&
-                     sameHistoricalFixture_(rows[j], r)));
+        g.every(j => sameHistoricalFixture_(r, rows[j], aliases) &&
+                     sameHistoricalFixture_(rows[j], r, aliases)));
       let group;
       if (matching.length === 1) {
         group = matching[0];
