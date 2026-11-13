@@ -240,3 +240,17 @@ testSlashCompositeArchivedDeletedOnlyOnApply();
 testSourceOverlapAllowedWithManualSelection();
 testFemeninaLeagueAndConflictingEventIds();
 console.log('AI queue: 5 grouped merge, archived delete and safety tests passed');
+
+
+function testSyntheticProviderIdsAreNotVerifiedSportRadarIds() {
+  const real=row('a','Real Madrid','Barcelona',5,'sr:match:76543210','2026-11-05');
+  const fake=row('b','Real Madrid','Barcelona',6,'sr:match:111111114634302','2026-11-05');
+  const other=row('c','Real Madrid','Barcelona',7,'sr:match:87654321','2026-11-05');
+  assert.deepEqual(JSON.stringify(context.aiMergeVerifiedIds_(real[12])),
+    JSON.stringify(['sr:match:76543210']));
+  assert.equal(context.aiMergeVerifiedIds_(fake[12]).length,0);
+  assert.equal(context.aiMergeSafety_([real,fake],'2026-11-05'),'');
+  assert.match(context.aiMergeSafety_([real,other],'2026-11-05'),/Konfliktní/);
+  assert.equal(context.aiMergeSafety_([fake,other],'2026-11-05'),'');
+}
+testSyntheticProviderIdsAreNotVerifiedSportRadarIds();
