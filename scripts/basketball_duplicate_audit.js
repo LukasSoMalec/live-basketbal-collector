@@ -118,13 +118,16 @@ function discoverDuplicateCandidates(matches, aliases, api) {
     }
     // "International" can be shared with country-specific names when teams agree.
     if(a.country&&b.country&&a.country!==b.country&&a.country!=='INT'&&b.country!=='INT'){compared.skipCountry++;continue}
-    if(a.sr&&b.sr&&a.sr!==b.sr||a.opaque&&b.opaque&&a.opaque!==b.opaque){compared.skipId++;continue}
+    // Synthetic provider IDs starting with 11111111 are placeholders, not verified SR.
+    const trustedA = a.sr && !/^sr:match:11111111\\d+$/i.test(a.sr) ? a.sr : '';
+    const trustedB = b.sr && !/^sr:match:11111111\\d+$/i.test(b.sr) ? b.sr : '';
+    if((trustedA && trustedB && trustedA !== trustedB) || (a.opaque && b.opaque && a.opaque !== b.opaque)) {compared.skipId++;continue}
     const s0=best(a.vH,b.vH),s1=best(a.vA,b.vA),r0=best(a.vH,b.vA),r1=best(a.vA,b.vH);
     const reversed=r0+r1>s0+s1;
     const scores=reversed?[r0,r1]:[s0,s1],min=Math.min(...scores),max=Math.max(...scores),avg=(scores[0]+scores[1])/2;
     const diff=Number.isFinite(a.time)&&Number.isFinite(b.time)?Math.round(Math.abs(a.time-b.time)/60000):9999;
     const common=a.sources.filter(z=>b.sources.includes(z)),complement=common.length===0;
-    const idSame=!!(a.sr&&a.sr===b.sr||a.opaque&&a.opaque===b.opaque);
+    const idSame=!!(trustedA&&trustedA===trustedB||a.opaque&&a.opaque===b.opaque);
     const scopeA=api.normLeague_(a.r[2]),scopeB=api.normLeague_(b.r[2]);
     const leagueMatch=scopeA===scopeB||groups.get(scopeA)?.has(scopeB)||groups.get(scopeB)?.has(scopeA)||
       [...(groups.get(scopeA)||[])].some(x=>groups.get(scopeB)?.has(x));
