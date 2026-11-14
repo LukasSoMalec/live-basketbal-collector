@@ -48,12 +48,15 @@ function aiMergeQueueDecode_(plan) {
 }
 
 function aiMergeAllIds_(note) {
+  // Only verified IDs participate in collision checks. The 11111111
+  // sequence may occur anywhere, not only at the beginning of the ID.
   return [...new Set(String(note || '').match(/sr:match:\d{5,}/gi) || [])]
-    .map(x => x.toLowerCase());
+    .map(x => x.toLowerCase())
+    .filter(id => !id.slice('sr:match:'.length).includes('11111111'));
 }
 
 function aiMergeVerifiedIds_(note) {
-  return aiMergeAllIds_(note).filter(id => !/^sr:match:11111111\d+$/i.test(id));
+  return aiMergeAllIds_(note);
 }
 
 function aiMergeAllFootballIds_(note) {
