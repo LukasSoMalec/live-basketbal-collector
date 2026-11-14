@@ -200,8 +200,17 @@ function chooseMatch_(rows, date, home, away, competition, incomingId,
 }
 
 function eventId_(text) {
-  const m = String(text || '').match(/(?:sr:match:|ExternalID\s*[:=]?\s*['"]?)(\d{5,})/i);
-  return m ? 'sr:match:' + m[1] : '';
+  // An eight-1 sequence is a synthetic provider placeholder, not a
+  // verified SportRadar match ID. Ignore it anywhere in the numeric ID.
+  // A merged note may contain a placeholder *before* a genuine ID;
+  // keep searching until a valid match is found.
+  const matches = String(text || '').matchAll(
+    /(?:sr:match:|ExternalID\s*[:=]?\s*['"]?)(\d{5,})/gi
+  );
+  for (const match of matches) {
+    if (!match[1].includes('11111111')) return 'sr:match:' + match[1];
+  }
+  return '';
 }
 
 // BSKT CUP runs many actual basketball games. Repeated opponents on a single
