@@ -66,7 +66,7 @@ function discoverDuplicateCandidates(matches, aliases, api) {
     if(!groups.has(lk))groups.set(lk,new Set());
     groups.get(lk).add(scope);
   }
-  const stops=new Set(['basket','basketball','baskets','basketbol','bc','bk','club','kk','fc','team','university','universidad','college','pallacanestro','baloncesto','basquetebol','baloncesto','sport','sports','the','de','do','da','di','del','della','of','a','b','as','asd','s','us','new','w','women','woman','men','sr']);
+  const stops=new Set(['basket','basketball','baskets','basketbol','bc','bk','club','kk','fc','team','university','universidad','college','pallacanestro','baloncesto','basquetebol','baloncesto','sport','sports','the','de','do','da','di','del','della','of','a','b','as','asd','s','us','new','w','women','woman','men','sr','stud','student','students']);
   const variants = (row,col) => {
     const r=row.r,cat=row.cls,v=new Set([api.normTeam_(r[col])]);
     for(let i=0;i<4;i++) {
