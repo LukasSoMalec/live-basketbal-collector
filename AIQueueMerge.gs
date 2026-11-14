@@ -48,8 +48,15 @@ function aiMergeQueueDecode_(plan) {
 }
 
 function aiMergeAllIds_(note) {
+  // Only verified IDs participate in collision checks. The 11111111
+  // sequence may occur anywhere, not only at the beginning of the ID.
   return [...new Set(String(note || '').match(/sr:match:\d{5,}/gi) || [])]
-    .map(x => x.toLowerCase());
+    .map(x => x.toLowerCase())
+    .filter(id => !id.slice('sr:match:'.length).includes('11111111'));
+}
+
+function aiMergeVerifiedIds_(note) {
+  return aiMergeAllIds_(note);
 }
 
 function aiMergeAllFootballIds_(note) {
@@ -81,12 +88,14 @@ function aiMergeSafety_(members, planDate) {
   const classes = new Set(members.map(r=>fixtureClass_(r[2],r[3],r[4])));
   if (classes.size !== 1)
     return 'Neshoduje se kategorie žen/mužů/mládeže.';
-  const ids = new Set(members.flatMap(r=>aiMergeAllIds_(r[12])));
-  if (ids.size > 1) return 'Konfliktní SportRadar ID.';
+  // Synthetic 11111111... sportsbook placeholders are not verified SR IDs.
+  // Explicitly approved queue matches may combine a placeholder with a real ID.
+  const ids = new Set(members.flatMap(r=>aiMergeVerifiedIds_(r[12])));
+  if (ids.size > 1) return 'Konfliktní ověřená SportRadar ID.';
   const opaque = new Set(members.flatMap(r=>aiMergeAllFootballIds_(r[12])));
   if (opaque.size > 1) return 'Konfliktní Football.com ID.';
   const verifiedEqual = ids.size === 1 &&
-    members.every(r=>aiMergeAllIds_(r[12]).includes([...ids][0])) ||
+    members.every(r=>aiMergeVerifiedIds_(r[12]).includes([...ids][0])) ||
     opaque.size === 1 &&
     members.every(r=>aiMergeAllFootballIds_(r[12]).includes([...opaque][0]));
 

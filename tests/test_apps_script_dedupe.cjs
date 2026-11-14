@@ -88,7 +88,7 @@ function testConflictAndCategoriesRemainSeparateAndFlagged() {
 }
 
 function testMultipleIdsAcrossThirdVariantNotTransitive() {
-  const a=row('Greece. Elite League','AS Papagou','Panionios Athens',5,'sr:match:11111111');
+  const a=row('Greece. Elite League','AS Papagou','Panionios Athens',5,'sr:match:44444444');
   const middle=row('Greece. Elite League','Papagou','Panionios',6,'');
   const b=row('Greece. Elite League','AS Papagou','Panionios Athens',7,'sr:match:22222222');
   const rows=[a,middle,b];
@@ -579,7 +579,7 @@ function testTeamAliasesNeverOverrideConflictingVerifiedIds() {
       context.normLeague_('Filipíny / NCAA, seniors')]])
   };
   const original=row('Filipíny / NCAA, seniors','Sscr Stags','Mapua Cardinals',
-    5,'sr:match:11111111',ts,ts,1,'2026-11-05');
+    5,'sr:match:44444444',ts,ts,1,'2026-11-05');
   assert.equal(context.sameLearnedAliasFixture_(a,'1xBit','2026-11-05',
     'San Sebastian College','Mapua Cardinals','Philippines. NCAA',original,
     'sr:match:22222222'),false);
@@ -653,3 +653,67 @@ testManualArchiveAliasRejectsConflictingIdsAndDates();
 testTeamAliasesRememberAcrossDaysAndOpponents();
 testTeamAliasesNeverOverrideConflictingVerifiedIds();
 console.log('Historical duplicate detection, full mock ingest, audit and conflict tests passed');
+
+
+function testWkblWithoutWomenSuffixAndRomanNumerals() {
+  assert.equal(context.fixtureClass_('WKBL','Cheongju KB Stars','Asan Woori Won'),
+    'adult|women');
+  assert.equal(context.fixtureClass_('Tauihi League','Northern Kahu','Mainland Pouakai'),
+    'adult|women');
+  assert.equal(context.fixtureClass_('KBL','Cheongju KB Stars','Asan Woori Won'),
+    'adult|unspecified');
+  const a=row('WKBL','Cheongju KB Stars','Asan Woori Won',8,'sr:match:75388786');
+  const b=row('Jižní Korea / WKBL, ženy','Cheongju KB Stars','Asan Woori Won',
+    5,'sr:match:75388786');
+  assert.equal(context.planHistoricalDeduplication_([a,b],ts).merged,1);
+  const c=row('KBL','Cheongju KB Stars','Asan Woori Won',7,'sr:match:75388786');
+  assert.equal(context.planHistoricalDeduplication_([c,b],ts).merged,0);
+  const r1=row('VTB United League. Youth League','Enisey II','Samara II',7,'');
+  const r2=row('VTB United League. Youth League','Enisey 2','Samara 2',6,'');
+  assert.equal(context.planHistoricalDeduplication_([r1,r2],ts).merged,1);
+}
+
+function testConfirmedAliasesInHourlyHistoricalPlanner() {
+  const league='Philippines. NCAA', scope='Filipíny / NCAA, seniors';
+  const a=row(league,'San Sebastian College','Arellano University Chiefs',7,'');
+  const b=row(scope,'Sscr Stags','Au Chiefs',5,'sr:match:74250436');
+  const cat=context.fixtureClass_(a[2],a[3],a[4]);
+  const dictionary=new Map([
+    ['San Sebastian College','Sscr Stags'],
+    ['Arellano University Chiefs','Au Chiefs']
+  ].map(([name,target])=>[
+    ['1xBit',context.normLeague_(league),context.normTeam_(name),cat].join('|'),
+    {canonical:context.normTeam_(target),scope:context.normLeague_(scope),conflict:false}
+  ]));
+  const aliases={dictionary,leagueGroups:new Map([
+    [context.normLeague_(league),context.normLeague_(scope)]
+  ])};
+  assert.equal(context.planHistoricalDeduplication_([a,b],ts,new Map(),{aliases}).merged,1);
+  const c=row(league,'San Sebastian College','Arellano University Chiefs',7,
+    'sr:match:44444444');
+  const d=row(scope,'Sscr Stags','Au Chiefs',5,'sr:match:22222222');
+  assert.equal(context.planHistoricalDeduplication_([c,d],ts,new Map(),{aliases}).merged,0);
+}
+
+testWkblWithoutWomenSuffixAndRomanNumerals();
+testConfirmedAliasesInHourlyHistoricalPlanner();
+console.log('WKBL / language aliases regression tests passed');
+
+function testSyntheticIdsDoNotBlockSameFixture() {
+  assert.equal(context.eventId_('sr:match:111111114634302'),'');
+  assert.equal(context.eventId_('sr:match:7651111111123'),'');
+  assert.equal(context.eventId_('sr:match:111111114634302; sr:match:74501122'),
+    'sr:match:74501122');
+  const fake=row('USA / NCAA','Boston College Eagles','Wagner Seahawks',
+    5,'sr:match:111111114634302');
+  const real=row('USA / NCAA','Boston College Eagles','Wagner Seahawks',
+    6,'sr:match:74501122');
+  const same=context.planHistoricalDeduplication_([fake,real],ts);
+  assert.equal(same.merged,1);
+  const x=row('USA / NCAA','Boston College Eagles','Wagner Seahawks',
+    5,'sr:match:74501122');
+  const y=row('USA / NCAA','Boston College Eagles','Wagner Seahawks',
+    6,'sr:match:74501123');
+  assert.equal(context.planHistoricalDeduplication_([x,y],ts).merged,0);
+}
+testSyntheticIdsDoNotBlockSameFixture();

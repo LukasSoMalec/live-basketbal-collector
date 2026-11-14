@@ -22,8 +22,11 @@ function manualMergeStamp_(value) {
 }
 
 function manualMergeIds_(note) {
+  // Synthetic sportsbook IDs containing 11111111 are not real SR IDs.
   return [...new Set(String(note || '').match(/sr:match:\d{5,}/gi) || [])]
-    .map(id => id.toLowerCase()).sort();
+    .map(id => id.toLowerCase())
+    .filter(id => !id.slice('sr:match:'.length).includes('11111111'))
+    .sort();
 }
 
 function manualMergeFootballIds_(note) {
