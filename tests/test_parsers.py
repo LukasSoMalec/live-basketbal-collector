@@ -445,5 +445,93 @@ class ParserTests(unittest.TestCase):
                          ("BC Khimki", "CSKA-2 Moscow"))
 
 
+
+class XbitPageSizeFallbackTests(unittest.IsolatedAsyncioTestCase):
+    """The 1xBit API rejects unsupported count values with HTTP 400."""
+
+    @staticmethod
+    def response(status, payload=None):
+        r = mock.Mock()
+        r.status_code = status
+        r.json.return_value = [] if payload is None else payload
+        return r
+
+    async def test_accepted_150_stops_after_first_request(self):
+        from collector import one_xbit
+
+        client = mock.Mock()
+        client.get = mock.AsyncMock(return_value=self.response(200))
+        result = await one_xbit(client)
+
+        self.assertEqual(result.status, "ÚSPĚCH")
+        self.assertEqual(result.matches, [])
+        self.assertFalse(result.complete)
+        self.assertEqual(client.get.await_count, 1)
+        self.assertIn("count=150", client.get.await_args.args[0])
+
+    async def test_http_400_steps_down_until_100_works(self):
+        from collector import one_xbit
+
+        client = mock.Mock()
+        client.get = mock.AsyncMock(side_effect=[
+            self.response(400), self.response(400), self.response(200)])
+        result = await one_xbit(client)
+
+        self.assertEqual(result.status, "ÚSPĚCH")
+        self.assertEqual(result.matches, [])
+        self.assertFalse(result.complete)
+        self.assertEqual([call.args[0].split("count=")[1].split("&")[0]
+                          for call in client.get.await_args_list],
+                         ["150", "125", "100"])
+        self.assertIn("accepted count=100", result.error)
+
+    async def test_falls_back_all_the_way_to_40(self):
+        from collector import one_xbit
+
+        client = mock.Mock()
+        client.get = mock.AsyncMock(side_effect=[
+            self.response(400) for _ in range(5)] + [self.response(200)])
+        result = await one_xbit(client)
+
+        self.assertEqual(result.status, "ÚSPĚCH")
+        self.assertEqual(client.get.await_count, 6)
+        self.assertIn("count=40", client.get.await_args.args[0])
+        self.assertIn("accepted count=40", result.error)
+
+    async def test_does_not_hammer_api_on_rate_limit(self):
+        from collector import one_xbit
+
+        client = mock.Mock()
+        client.get = mock.AsyncMock(return_value=self.response(429))
+        result = await one_xbit(client)
+
+        self.assertEqual(result.status, "NEDOSTUPNÉ")
+        self.assertEqual(client.get.await_count, 1)
+        self.assertIn("HTTP 429", result.error)
+
+    async def test_invalid_schema_is_not_marked_success(self):
+        from collector import one_xbit
+
+        client = mock.Mock()
+        client.get = mock.AsyncMock(return_value=self.response(200, {"bad": "data"}))
+        result = await one_xbit(client)
+
+        self.assertEqual(result.status, "NEDOSTUPNÉ")
+        self.assertEqual(client.get.await_count, 1)
+        self.assertIn("schema", result.error)
+
+    async def test_no_usable_page_size_leaves_source_unavailable(self):
+        from collector import one_xbit
+
+        client = mock.Mock()
+        client.get = mock.AsyncMock(return_value=self.response(400))
+        result = await one_xbit(client)
+
+        self.assertEqual(result.status, "NEDOSTUPNÉ")
+        self.assertFalse(result.complete)
+        self.assertEqual(client.get.await_count, 6)
+        self.assertIn("count=40", result.error)
+
+
 if __name__ == '__main__':
     unittest.main()
