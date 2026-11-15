@@ -23,7 +23,7 @@ FON_URL = "https://fonbet.com.cy/live/basketball"
 FON_API = "https://line-lb51.bk6bba-resources.com/events/listBase?lang=en&scopeMarket=1600"
 BIT_URL = "https://1xbit-8976.pro/cs/live/basketball"
 BIT_API = ("https://1xbit-8976.pro/service-api/main-live-feed/v3/games1x2"
-           "?cfView=3&count=40&fcountry=204&gr=933&grMode=4&lng=cs&ref=65&selectedMs=1.3,2.3,10.3")
+           "?cfView=3&count=200&fcountry=204&gr=933&grMode=4&lng=cs&ref=65&selectedMs=1.3,2.3,10.3")
 LOG = logging.getLogger("basketball")
 
 
@@ -644,7 +644,7 @@ async def one_xbit(client: httpx.AsyncClient) -> Source:
         src.status = "ÚSPĚCH"
     except Exception as exc:
         src.error = "1xBit API: " + type(exc).__name__
-    # The request has count=40 and may be a partial page, so never infer NE.
+    # The request has count=200 but may still be partial/capped by the API; never infer NE.
     src.complete = False
     return src
 
