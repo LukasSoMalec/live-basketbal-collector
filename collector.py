@@ -23,7 +23,7 @@ FON_URL = "https://fonbet.com.cy/live/basketball"
 FON_API = "https://line-lb51.bk6bba-resources.com/events/listBase?lang=en&scopeMarket=1600"
 BIT_URL = "https://1xbit-8976.pro/cs/live/basketball"
 BIT_API = ("https://1xbit-8976.pro/service-api/main-live-feed/v3/games1x2"
-           "?cfView=3&count=100&fcountry=204&gr=933&grMode=4&lng=cs&ref=65&selectedMs=1.3,2.3,10.3")
+           "?cfView=3&count=150&fcountry=204&gr=933&grMode=4&lng=cs&ref=65&selectedMs=1.3,2.3,10.3")
 LOG = logging.getLogger("basketball")
 
 
@@ -629,33 +629,43 @@ async def fonbet(browser, client: httpx.AsyncClient, wait_ms: int = 7000) -> Sou
 
 
 async def one_xbit(client: httpx.AsyncClient) -> Source:
-    """Collect from public 1xBit JSON API, no cookies or browser bypass."""
+    """Collect 1xBit LIVE feed, decreasing page size only on HTTP 400."""
     src = Source("1xBit")
-    # The provider returned HTTP 400 for count=200 on 2026-11-15.
-    # Try 100; if it rejects the requested page size, fall back to proven 40.
-    for count in (100, 40):
+    # 1xBit rejected count=200 on 2026-11-15. Probe larger pages first,
+    # then progressively smaller ones, ending at the previously working 40.
+    # Never retry on 403/429 (access/rate limit) or other unexpected failures.
+    page_sizes = (150, 125, 100, 75, 50, 40)
+    rejected_sizes = []
+    for count in page_sizes:
         try:
-            url = BIT_API.replace("count=100", f"count={count}")
+            url = BIT_API.replace("count=150", f"count={count}")
             response = await client.get(url, timeout=20)
-            if response.status_code == 400 and count != 40:
-                LOG.warning("1xBit API rejected count=%d (HTTP 400); retrying with 40", count)
-                continue
+            if response.status_code == 400:
+                rejected_sizes.append(count)
+                if count != page_sizes[-1]:
+                    LOG.warning("1xBit rejected count=%d (HTTP 400); trying a smaller page", count)
+                    continue
             if response.status_code != 200:
-                src.error = "API HTTP " + str(response.status_code)
+                src.error = f"API HTTP {response.status_code} (count={count})"
                 break
             parsed = parse_1xbit(response.json(), src.rejected)
             if parsed is None:
-                src.error = "Unexpected 1xBit LIVE JSON schema"
+                src.error = f"Unexpected 1xBit LIVE JSON schema (count={count})"
                 break
             src.matches = parsed
             src.status = "ÚSPĚCH"
-            if count == 40:
-                src.error = "API count=100 rejected; fell back to count=40"
+            if rejected_sizes:
+                src.error = (
+                    "Larger page sizes rejected: " +
+                    ",".join(map(str, rejected_sizes)) +
+                    f"; accepted count={count}"
+                )
+            LOG.info("1xBit accepted count=%d; parsed %d LIVE matches", count, len(parsed))
             break
         except Exception as exc:
             src.error = "1xBit API: " + type(exc).__name__
             break
-    # A larger page or fallback still cannot guarantee complete coverage.
+    # Even a successful larger page can be capped or incomplete; never infer NE.
     src.complete = False
     return src
 
