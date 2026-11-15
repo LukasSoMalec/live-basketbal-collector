@@ -23,7 +23,7 @@ FON_URL = "https://fonbet.com.cy/live/basketball"
 FON_API = "https://line-lb51.bk6bba-resources.com/events/listBase?lang=en&scopeMarket=1600"
 BIT_URL = "https://1xbit-8976.pro/cs/live/basketball"
 BIT_API = ("https://1xbit-8976.pro/service-api/main-live-feed/v3/games1x2"
-           "?cfView=3&count=200&fcountry=204&gr=933&grMode=4&lng=cs&ref=65&selectedMs=1.3,2.3,10.3")
+           "?cfView=3&count=100&fcountry=204&gr=933&grMode=4&lng=cs&ref=65&selectedMs=1.3,2.3,10.3")
 LOG = logging.getLogger("basketball")
 
 
@@ -631,20 +631,31 @@ async def fonbet(browser, client: httpx.AsyncClient, wait_ms: int = 7000) -> Sou
 async def one_xbit(client: httpx.AsyncClient) -> Source:
     """Collect from public 1xBit JSON API, no cookies or browser bypass."""
     src = Source("1xBit")
-    try:
-        response = await client.get(BIT_API, timeout=20)
-        if response.status_code != 200:
-            src.error = "API HTTP " + str(response.status_code)
-            return src
-        parsed = parse_1xbit(response.json(), src.rejected)
-        if parsed is None:
-            src.error = "Unexpected 1xBit LIVE JSON schema"
-            return src
-        src.matches = parsed
-        src.status = "ÚSPĚCH"
-    except Exception as exc:
-        src.error = "1xBit API: " + type(exc).__name__
-    # The request has count=200 but may still be partial/capped by the API; never infer NE.
+    # The provider returned HTTP 400 for count=200 on 2026-11-15.
+    # Try 100; if it rejects the requested page size, fall back to proven 40.
+    for count in (100, 40):
+        try:
+            url = BIT_API.replace("count=100", f"count={count}")
+            response = await client.get(url, timeout=20)
+            if response.status_code == 400 and count != 40:
+                LOG.warning("1xBit API rejected count=%d (HTTP 400); retrying with 40", count)
+                continue
+            if response.status_code != 200:
+                src.error = "API HTTP " + str(response.status_code)
+                break
+            parsed = parse_1xbit(response.json(), src.rejected)
+            if parsed is None:
+                src.error = "Unexpected 1xBit LIVE JSON schema"
+                break
+            src.matches = parsed
+            src.status = "ÚSPĚCH"
+            if count == 40:
+                src.error = "API count=100 rejected; fell back to count=40"
+            break
+        except Exception as exc:
+            src.error = "1xBit API: " + type(exc).__name__
+            break
+    # A larger page or fallback still cannot guarantee complete coverage.
     src.complete = False
     return src
 
