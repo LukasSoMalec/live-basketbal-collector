@@ -60,4 +60,25 @@ assert.equal(context.sameFixture_('2026-11-02', 'Papagou', 'Panionios',
 assert.equal(context.sameFixture_('2026-11-03', 'Papagou', 'Panionios',
   'Greece. Elite League', conflict, ''), false);
 
-console.log('Apps Script matching tests passed (15 cases)');
+
+// Peak-hour optimization: limiting the candidate set by date and fixture class
+// must preserve exactly the same matching decision as the full-sheet scan.
+const bucketRows = [
+  row('2026-11-14', 'Greece. Elite League', 'Papagou', 'Panionios'),
+  row('2026-11-15', 'Greece. Elite League', 'Papagou U19', 'Panionios U19'),
+  row('2026-11-15', 'Řecko / Elite League', 'AS Papagou', 'Panionios BC Atény',
+    'sr:match:73113286'),
+  row('2026-11-15', 'Greece. Elite League', 'Completely Different', 'Team'),
+];
+const expected = context.chooseMatch_(bucketRows, '2026-11-15',
+  'Papagou', 'Panionios', 'Greece. Elite League', '', null, '');
+const bucketed = context.chooseMatch_(bucketRows, '2026-11-15',
+  'Papagou', 'Panionios', 'Greece. Elite League', '', null, '', [2, 3]);
+assert.equal(expected, 2);
+assert.equal(bucketed, expected);
+assert.equal(context.chooseMatch_(bucketRows, '2026-11-15',
+  'Papagou U19', 'Panionios U19', 'Greece. Elite League', '', null, '', [1]), 1);
+assert.equal(context.chooseMatch_(bucketRows, '2026-11-16',
+  'Papagou', 'Panionios', 'Greece. Elite League', '', null, '', []), -1);
+
+console.log('Apps Script matching tests passed (19 cases)');
