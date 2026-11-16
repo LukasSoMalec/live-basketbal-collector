@@ -173,9 +173,13 @@ function sameFixture_(date, home, away, competition, row, incomingId) {
 }
 
 function chooseMatch_(rows, date, home, away, competition, incomingId,
-                      aliases = null, source = '') {
+                      aliases = null, source = '', candidateIndices = null) {
   const candidates = [];
-  for (let ix = 0; ix < rows.length; ix++) {
+  // Historical standalone calls may scan all rows; LIVE ingest passes the
+  // date+fixtureClass bucket so hundreds of events do not rescan the full sheet.
+  const indices = candidateIndices === null
+    ? rows.map((_, ix) => ix) : candidateIndices;
+  for (const ix of indices) {
     if (sameFixture_(date, home, away, competition, rows[ix], incomingId) ||
         sameLearnedAliasFixture_(aliases, source, date, home, away,
           competition, rows[ix], incomingId))
@@ -854,6 +858,7 @@ function saveSnapshot_(body) {
   const idIndex = new Map();
   const footballIndex = new Map();
   const nameIndex = new Map();
+  const dateClassIndex = new Map();
   rows.forEach((r, index) => {
     const id = eventId_(r[12]);
     if (id) idIndex.set(id, index);
@@ -862,6 +867,10 @@ function saveSnapshot_(body) {
     const key = exactKey_(r[1], r[3], r[4]);
     if (!nameIndex.has(key)) nameIndex.set(key, []);
     nameIndex.get(key).push(index);
+    const categoryKey = matchDateKey_(r[1]) + '|' +
+      fixtureClass_(r[2], r[3], r[4]);
+    if (!dateClassIndex.has(categoryKey)) dateClassIndex.set(categoryKey, []);
+    dateClassIndex.get(categoryKey).push(index);
   });
 
   const sourceMap = new Map();
@@ -910,8 +919,10 @@ function saveSnapshot_(body) {
         ix = footballIndex.get(footballId);
       if (ix === -1 && !rapidRepeat) {
         // Never use approximate names alone to pair two BSKT CUP games.
+        const categoryKey = m.date + '|' +
+          fixtureClass_(m.competition, m.home, m.away);
         ix = chooseMatch_(rows, m.date, m.home, m.away, m.competition, srid,
-          learnedAliases, source);
+          learnedAliases, source, dateClassIndex.get(categoryKey) || []);
       }
       if (ix === -1) {
         const key = [m.date, norm_(m.competition), normTeam_(m.home), normTeam_(m.away),
@@ -924,6 +935,10 @@ function saveSnapshot_(body) {
         rows.push(initial);
         if (!nameIndex.has(nameKey)) nameIndex.set(nameKey, []);
         nameIndex.get(nameKey).push(ix);
+        const categoryKey = m.date + '|' +
+          fixtureClass_(m.competition, m.home, m.away);
+        if (!dateClassIndex.has(categoryKey)) dateClassIndex.set(categoryKey, []);
+        dateClassIndex.get(categoryKey).push(ix);
         created++;
       }
       if (srid) {
