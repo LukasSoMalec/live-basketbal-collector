@@ -993,28 +993,58 @@ function saveSnapshot_(body) {
     .reduce((sum, indices) => sum +
       new Set([...indices].map(ix => cleanup.masterByIndex.get(ix))).size, 0);
 
-  // Write adjacent touched rows in one operation instead of dozens of calls.
-  // Leave untouched rows (and any formulas they may contain) unchanged.
+  // Reduce round trips on busy LIVE polls: coalesce nearby touched rows.
+  // Never use a whole-sheet rewrite. Rows in a small untouched gap are read
+  // fresh just before writing, with any formulas restored as formulas.
   const oldCount = originalRows.length;
   const touchedExisting = [...touched].filter(ix => ix < oldCount).sort((a, b) => a - b);
+  const MAX_INGEST_WRITE_GAP = 8;
   let segmentStart = -1;
   let segmentEnd = -1;
+  let segmentTouched = 0;
+  let ingestWriteBatches = 0;
   function flushSegment_() {
     if (segmentStart === -1) return;
-    gamesSheet.getRange(segmentStart + 2, 1, segmentEnd - segmentStart + 1, 13)
-      .setValues(rows.slice(segmentStart, segmentEnd + 1));
+    const n = segmentEnd - segmentStart + 1;
+    const range = gamesSheet.getRange(segmentStart + 2, 1, n, 13);
+    const payload = rows.slice(segmentStart, segmentEnd + 1).map(r => r.slice());
+    if (n !== segmentTouched) {
+      const live = range.getValues();
+      const formulas = range.getFormulas();
+      for (let off = 0; off < n; off++) {
+        const ix = segmentStart + off;
+        if (!touched.has(ix)) {
+          // Preserve a gap row's current values and formulas, not stale copies.
+          payload[off] = live[off].map((v, col) => formulas[off][col] || v);
+        } else {
+          // Also retain any formula in a touched row's unchanged columns.
+          for (let col = 0; col < 13; col++) {
+            if (formulas[off][col] &&
+                payload[off][col] === originalRows[ix][col])
+              payload[off][col] = formulas[off][col];
+          }
+        }
+      }
+    }
+    range.setValues(payload);
+    ingestWriteBatches++;
   }
   for (const ix of touchedExisting) {
     if (segmentStart === -1) {
       segmentStart = segmentEnd = ix;
-    } else if (ix === segmentEnd + 1) {
+      segmentTouched = 1;
+    } else if (ix <= segmentEnd + MAX_INGEST_WRITE_GAP + 1) {
       segmentEnd = ix;
+      segmentTouched++;
     } else {
       flushSegment_();
       segmentStart = segmentEnd = ix;
+      segmentTouched = 1;
     }
   }
   flushSegment_();
+  console.log('Ingest updated ' + touchedExisting.length +
+    ' existing rows in ' + ingestWriteBatches + ' write batches.');
 
   if (rows.length > oldCount) {
     gamesSheet.getRange(oldCount + 2, 1, rows.length - oldCount, 13)
