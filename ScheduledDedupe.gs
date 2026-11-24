@@ -75,10 +75,13 @@ function scheduledDeduplicateDay_(ss, day) {
     if (toLocal.has(from) && toLocal.has(target))
       localLinks.set(toLocal.get(from), toLocal.get(target));
   }
+  // Reuse confirmed team aliases while scanning historical matches.
+  const learnedAliases = readTeamAliases_(ss, []);
   const linksMs = Date.now() - started - readMs;
   const stamp = Utilities.formatDate(new Date(),'Europe/Prague','yyyy-MM-dd HH:mm:ss');
   const plan = planHistoricalDeduplication_(localRows, stamp, localLinks,
-    {maxDeleted:HIST_DEDUPE_MAX_DELETES,maxGroups:HIST_DEDUPE_MAX_GROUPS});
+    {maxDeleted:HIST_DEDUPE_MAX_DELETES,maxGroups:HIST_DEDUPE_MAX_GROUPS,
+      aliases:learnedAliases});
   const analysisMs = Date.now() - started - readMs - linksMs;
   // Fail before ANY write if matching took too long.
   if (Date.now()-started > 210000)

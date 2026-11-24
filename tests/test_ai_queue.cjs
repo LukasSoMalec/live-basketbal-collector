@@ -119,7 +119,7 @@ function testSlashCompositeArchivedDeletedOnlyOnApply() {
   const composite=row('multi',
     'Utah Jazz/Cleveland Cavaliers',
     'New Orleans Pelicans/Oklahoma City Thunder',7);
-  const real=row('real','Utah Jazz','New Orleans Pelicans',5,'sr:match:11111111');
+  const real=row('real','Utah Jazz','New Orleans Pelicans',5,'sr:match:73156789');
   const legitSlash=row('clubSlash','ABC/DEF University','Wyoming',7);
   const sheets=mock([real,composite,legitSlash],[]);
   const before=context.aiMergeQueuePreview_();
@@ -159,11 +159,11 @@ function testFemeninaLeagueAndConflictingEventIds() {
   assert.equal(context.aiMergeQueuePreview_().proposals[0].valid,true);
   assert.equal(context.aiMergeQueueApply_(['femenina']).mergedGroups,1);
 
-  const x=row('x','Piratas de Bogota','Toros Del Valle',5,'sr:match:11111111');
+  const x=row('x','Piratas de Bogota','Toros Del Valle',5,'sr:match:33333333');
   const y=row('y','Piratas de Bogota','Toros Del Valle',5,'sr:match:22222222');
   const conflicts=mock([x,y],[plan('ids',['x','y'],[false])]);
   assert.equal(context.aiMergeQueuePreview_().proposals[0].valid,false);
-  assert.match(context.aiMergeQueuePreview_().proposals[0].problem,/Konfliktní SportRadar ID/);
+  assert.match(context.aiMergeQueuePreview_().proposals[0].problem,/Konfliktní ověřená SportRadar ID/);
   assert.equal(context.aiMergeQueueApply_(['ids']).mergedGroups,0);
   assert.equal(conflicts.Zápasy.rows.length,3);
 }
@@ -240,3 +240,38 @@ testSlashCompositeArchivedDeletedOnlyOnApply();
 testSourceOverlapAllowedWithManualSelection();
 testFemeninaLeagueAndConflictingEventIds();
 console.log('AI queue: 5 grouped merge, archived delete and safety tests passed');
+
+
+function testSyntheticProviderIdsAreNotVerifiedSportRadarIds() {
+  const real=row('a','Real Madrid','Barcelona',5,'sr:match:76543210','2026-11-05');
+  const fake=row('b','Real Madrid','Barcelona',6,'sr:match:111111114634302','2026-11-05');
+  const other=row('c','Real Madrid','Barcelona',7,'sr:match:87654321','2026-11-05');
+  assert.deepEqual(JSON.stringify(context.aiMergeVerifiedIds_(real[12])),
+    JSON.stringify(['sr:match:76543210']));
+  assert.equal(context.aiMergeVerifiedIds_(fake[12]).length,0);
+  assert.equal(context.aiMergeSafety_([real,fake],'2026-11-05'),'');
+  assert.match(context.aiMergeSafety_([real,other],'2026-11-05'),/Konfliktní/);
+  assert.equal(context.aiMergeSafety_([fake,other],'2026-11-05'),'');
+}
+testSyntheticProviderIdsAreNotVerifiedSportRadarIds();
+
+function testIgnoredPlaceholderAtAnyPositionAndPreserveRealId() {
+  const bad='sr:match:76111111112345';
+  assert.equal(context.eventId_(bad),'');
+  assert.equal(context.eventId_('ExternalID=11111111555'),'');
+  assert.equal(context.eventId_('sr:match:111111114634302; sr:match:76543210'),
+    'sr:match:76543210');
+  assert.equal(context.eventId_('sr:match:76543210; sr:match:111111114634302'),
+    'sr:match:76543210');
+  assert.deepEqual(JSON.stringify(context.aiMergeVerifiedIds_(
+    'sr:match:111111114634302; '+bad+'; sr:match:76543210')),
+    JSON.stringify(['sr:match:76543210']));
+  const fake=row('s','Boston College Eagles','Wagner Seahawks',5,bad);
+  const real=row('r','Boston College Eagles','Wagner Seahawks',6,'sr:match:76543210');
+  const sh=mock([real,fake],[plan('ignored',['r','s'],[false])]);
+  assert.equal(context.aiMergeQueuePreview_().proposals[0].valid,true);
+  assert.equal(context.aiMergeQueueApply_(['ignored']).mergedGroups,1);
+  assert.equal(sh.Zápasy.rows.length,2);
+  assert.equal(context.eventId_(sh.Zápasy.rows[1][12]),'sr:match:76543210');
+}
+testIgnoredPlaceholderAtAnyPositionAndPreserveRealId();
