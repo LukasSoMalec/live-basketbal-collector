@@ -5,8 +5,8 @@
  * @license MIT
  */
 const AI_CANDIDATE_SHEET = 'AI kandidáti';
-function aiCandidateStamp_(v) {
-  if (v instanceof Date) return v.getTime();
+function aiCandidateStamp_(v, sheetZone) {
+  if (v instanceof Date) return aiCandidateStamp_(Utilities.formatDate(v, sheetZone || 'Etc/GMT', 'yyyy-MM-dd HH:mm:ss'));
   if (typeof v === 'number') {
     const wall = new Date((v - 25569) * 86400000);
     return aiCandidateStamp_(wall.toISOString().slice(0,19));
@@ -61,6 +61,8 @@ function aiCandidatePrepare() {
   if(!lock.tryLock(25000)) throw new Error('Candidate preparation: lock unavailable');
   try {
     const ss=SpreadsheetApp.openById(SPREADSHEET_ID);
+    const existing=ss.getSheetByName(AI_CANDIDATE_SHEET);
+    if(existing){existing.getRange(1,1,1,5).setValues([['BUILDING','','','','']]);SpreadsheetApp.flush();}
     const now=new Date(), cutoff=now.getTime()-36*3600000;
     const rows=aiCandidateRead_(ss,'Zápasy',13);
     const aliases=aiCandidateRead_(ss,'Aliasy týmů',8);
@@ -91,9 +93,10 @@ function aiCandidatePrepare() {
     const byKey=new Map(), active=[], candidates=[];
     let latest=0, unknown=0;
     const dateFloor=Utilities.formatDate(new Date(cutoff),'Europe/Prague','yyyy-MM-dd');
+    const sheetZone=ss.getSpreadsheetTimeZone();
     rows.forEach((r,i)=>{
       const key=String(r[0]||'');if(!key)return;
-      const stamps=[aiCandidateStamp_(r[9]),aiCandidateStamp_(r[10])].filter(Number.isFinite);
+      const stamps=[aiCandidateStamp_(r[9],sheetZone),aiCandidateStamp_(r[10],sheetZone)].filter(Number.isFinite);
       const t=stamps.length?Math.max(...stamps):NaN;
       if(Number.isFinite(t))latest=Math.max(latest,t);
       const date=matchDateKey_(r[1]);
